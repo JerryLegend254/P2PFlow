@@ -15,8 +15,8 @@ func main() {
 		auth: authConfig{
 			oauth: oauthConfig{
 				config: &oauth2.Config{
-					ClientID:     env.GetString("GITHUB_CLIENT_ID", "Ov23liC3LuwooH4KTcjX"),
-					ClientSecret: env.GetString("GITHUB_CLIENT_SECRET", "2acc8a37e834ed000159dab091a6964e591a61e1"),
+					ClientID:     env.GetString("GITHUB_CLIENT_ID", ""),
+					ClientSecret: env.GetString("GITHUB_CLIENT_SECRET", ""),
 					Endpoint:     github.Endpoint,
 					Scopes:       []string{"read:user", "user:email"},
 				},
@@ -40,8 +40,8 @@ func main() {
 		console: consoleLogger,
 	}
 
-	// register commands
-	app.registerCommand(app.newLoginCommand(app.config.auth.oauth.config))
+	// mount root command
+	app.mount()
 
 	if err := app.run(rootCmd); err != nil {
 		app.console.Error(err.Error())

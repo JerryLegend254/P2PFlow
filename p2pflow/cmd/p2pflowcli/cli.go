@@ -8,9 +8,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "psynccli",
+	Use:   "p2pflow",
 	Short: "P2P file synchronization with intelligent features",
-	Long:  "PSyncCLI enables real-time peer-to-peer file synchronization for development teams.",
+	Long:  "P2PFlow enables real-time peer-to-peer file synchronization for development teams.",
 }
 
 type application struct {
@@ -33,8 +33,11 @@ type oauthConfig struct {
 	state  string
 }
 
-func (app *application) registerCommand(cmd *cobra.Command) {
-	rootCmd.AddCommand(cmd)
+func (app *application) mount() {
+	// register commands
+	rootCmd.AddCommand(app.newLoginCommand(app.config.auth.oauth.config))
+	rootCmd.AddCommand(app.newWhoAmICommand())
+	rootCmd.AddCommand(app.newLogOutCommand())
 }
 
 func (app *application) run(rootCmd *cobra.Command) error {
