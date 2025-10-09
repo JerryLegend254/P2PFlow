@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +22,18 @@ type DeviceCodeResponse struct {
 	VerificationURIComplete string `json:"verification_uri_complete"`
 	ExpiresIn               int    `json:"expires_in"`
 	Interval                int    `json:"interval"`
+}
+
+type GetGithubUserResponse struct {
+	Username  string `json:"login"`
+	AvatarURL string `json:"avatar_url"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+}
+
+type AuthConfig struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
@@ -82,7 +96,7 @@ func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
 				}
 				defer tokenResp.Body.Close()
 
-				var tokenData map[string]interface{}
+				var tokenData map[string]any
 				if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
 					return fmt.Errorf("error decoding token response: %w", err)
 				}
@@ -98,13 +112,19 @@ func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
 						time.Sleep(interval)
 						continue
 					default:
-						return fmt.Errorf("GitHub returned error: %v", tokenData)
+						return fmt.Errorf("github returned error: %v", tokenData)
 					}
 				}
 
 				// Success
 				if accessToken, ok := tokenData["access_token"].(string); ok {
-					app.console.Info("Successfully obtained access token: ", accessToken)
+					ac := AuthConfig{Token: accessToken, ExpiresAt: time.Now().Add(24 * time.Hour * 30).Local().String()}
+
+					// TODO: encrypt file
+					if err := saveAuth(ac); err != nil {
+						return fmt.Errorf("saving config failed with error: %v", err.Error())
+
+					}
 				} else {
 					return fmt.Errorf("unexpected token response: %v", tokenData)
 				}
@@ -116,4 +136,84 @@ func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
 	}
 
 	return cmd
+}
+
+func (app *application) newWhoAmICommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "whoami",
+		Short: "Check currently logged in user",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			ac, err := app.loadAuth()
+			if err != nil {
+				return fmt.Errorf("")
+			}
+
+			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+			if err != nil {
+				return fmt.Errorf("error creating get user request: %w", err)
+			}
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ac.Token))
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("error getting user: %w", err)
+			}
+			defer resp.Body.Close()
+
+			var user GetGithubUserResponse
+			if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+				return fmt.Errorf("error decoding user response: %w", err)
+			}
+
+			app.console.Infof("You are logged in as: %s", user.Username)
+			return nil
+		},
+	}
+	return cmd
+
+}
+
+func (app *application) newLogOutCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "logout",
+		Short: "Logout currently logged in user",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, _ := configPath()
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("failed to logout %s", err.Error())
+
+			}
+			return nil
+		},
+	}
+	return cmd
+
+}
+
+func configPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "p2pflow", "config.json"), nil
+}
+
+func saveAuth(cfg AuthConfig) error {
+	path, _ := configPath()
+	os.MkdirAll(filepath.Dir(path), 0700)
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	return os.WriteFile(path, data, 0600) // restrict perms
+}
+
+func (app *application) loadAuth() (*AuthConfig, error) {
+	path, _ := configPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg AuthConfig
+	json.Unmarshal(data, &cfg)
+	return &cfg, nil
 }
