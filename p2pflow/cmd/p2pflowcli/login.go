@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"golang.org/x/oauth2"
 )
 
@@ -121,10 +123,30 @@ func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
 					ac := AuthConfig{Token: accessToken, ExpiresAt: time.Now().Add(24 * time.Hour * 30).Local().String()}
 
 					// TODO: encrypt file
-					if err := saveAuth(ac); err != nil {
-						return fmt.Errorf("saving config failed with error: %v", err.Error())
-
+					req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+					if err != nil {
+						return fmt.Errorf("error creating get user request: %w", err)
 					}
+					req.Header.Set("Accept", "application/json")
+					req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ac.Token))
+
+					resp, err := http.DefaultClient.Do(req)
+					if err != nil {
+						return fmt.Errorf("error getting user: %w", err)
+					}
+					defer resp.Body.Close()
+
+					var user GetGithubUserResponse
+					if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+						return fmt.Errorf("error decoding user response: %w", err)
+					}
+					viper.Set("auth.provider", "github")
+					viper.Set("auth.token", ac.Token)
+					viper.Set("auth.username", user.Username)
+					viper.Set("auth.name", user.Name)
+					viper.Set("auth.expires_at", ac.ExpiresAt)
+
+					app.saveConfig()
 				} else {
 					return fmt.Errorf("unexpected token response: %v", tokenData)
 				}
@@ -143,31 +165,35 @@ func (app *application) newWhoAmICommand() *cobra.Command {
 		Use:   "whoami",
 		Short: "Check currently logged in user",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			ac, err := app.loadAuth()
+			cfg, err := app.loadAuth()
 			if err != nil {
-				return fmt.Errorf("")
+				if errors.Is(err, os.ErrNotExist) {
+					app.console.Info("not logged in, use the login command to log in, by running:\np2pflow login")
+					return nil
+				}
+				return fmt.Errorf("error loading details %v", err)
 			}
 
-			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+			if cfg.Auth.Token == "" || cfg.Auth.Username == "" {
+				app.console.Info("not logged in, use the login command to log in, by running:\np2pflow login")
+				return nil
+			}
+			layout := "2006-01-02 15:04:05.99999 -0700 MST"
+			expDate, err := time.Parse(layout, cfg.Auth.ExpiresAt)
 			if err != nil {
-				return fmt.Errorf("error creating get user request: %w", err)
-			}
-			req.Header.Set("Accept", "application/json")
-			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ac.Token))
+				return fmt.Errorf("error parsing expiry date %s", err.Error())
 
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return fmt.Errorf("error getting user: %w", err)
 			}
-			defer resp.Body.Close()
+			if time.Now().After(expDate) {
+				return fmt.Errorf("error token already expired, login again")
 
-			var user GetGithubUserResponse
-			if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-				return fmt.Errorf("error decoding user response: %w", err)
 			}
 
-			app.console.Infof("You are logged in as: %s", user.Username)
+			if len(cfg.Auth.Token) > 0 {
+				app.console.Infof("You are logged in as: %s", cfg.Auth.Username)
+			} else {
+
+			}
 			return nil
 		},
 	}
@@ -180,7 +206,7 @@ func (app *application) newLogOutCommand() *cobra.Command {
 		Use:   "logout",
 		Short: "Logout currently logged in user",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, _ := configPath()
+			path, _ := app.configPath()
 			if err := os.Remove(path); err != nil {
 				return fmt.Errorf("failed to logout %s", err.Error())
 
@@ -192,28 +218,11 @@ func (app *application) newLogOutCommand() *cobra.Command {
 
 }
 
-func configPath() (string, error) {
+// TODO: update to config file passed just in case
+func (app *application) configPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "p2pflow", "config.json"), nil
-}
-
-func saveAuth(cfg AuthConfig) error {
-	path, _ := configPath()
-	os.MkdirAll(filepath.Dir(path), 0700)
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return os.WriteFile(path, data, 0600) // restrict perms
-}
-
-func (app *application) loadAuth() (*AuthConfig, error) {
-	path, _ := configPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var cfg AuthConfig
-	json.Unmarshal(data, &cfg)
-	return &cfg, nil
+	return filepath.Join(dir, app.appName, "config.yaml"), nil
 }
