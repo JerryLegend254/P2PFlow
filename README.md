@@ -1,8 +1,8 @@
 # P2PFlow
 
 <div align="center">
+<img width="200" height="200" alt="P2PFlow" src="https://github.com/user-attachments/assets/4442a855-1d24-4bbf-9518-6cf84fc4ec63" />
 
-![P2PFlow Logo](https://via.placeholder.com/200x200?text=P2PFlow)
 
 **Intelligent Peer-to-Peer File Synchronization for Development Teams**
 
