@@ -7,13 +7,17 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var cfgFile string
+
 var rootCmd = &cobra.Command{
-	Use:   "p2pflow",
-	Short: "P2P file synchronization with intelligent features",
-	Long:  "P2PFlow enables real-time peer-to-peer file synchronization for development teams.",
+	Use:     "p2pflow",
+	Short:   "P2P file synchronization with intelligent features",
+	Version: version,
+	Long:    "P2PFlow enables real-time peer-to-peer file synchronization for development teams.",
 }
 
 type application struct {
+	appName string
 	config  config
 	auth    auth.Authenticator
 	logger  logger.Logger
@@ -34,6 +38,12 @@ type oauthConfig struct {
 }
 
 func (app *application) mount() {
+	// config flag
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ~/.config/p2pflow/config.yaml)")
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		return app.initConfig(cfgFile)
+	}
+
 	// register commands
 	rootCmd.AddCommand(app.newLoginCommand(app.config.auth.oauth.config))
 	rootCmd.AddCommand(app.newWhoAmICommand())

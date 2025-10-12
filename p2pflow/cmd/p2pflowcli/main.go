@@ -10,6 +10,8 @@ import (
 	"golang.org/x/oauth2/github"
 )
 
+var version = "0.0.0"
+
 func main() {
 	cfg := config{
 		auth: authConfig{
@@ -34,6 +36,7 @@ func main() {
 	authenticator := auth.NewAuthenticator(cfg.auth.oauth.config, cfg.auth.oauth.state)
 
 	app := &application{
+		appName: "p2pflow",
 		config:  cfg,
 		auth:    authenticator,
 		logger:  jsonLogger,
@@ -44,7 +47,7 @@ func main() {
 	app.mount()
 
 	if err := app.run(rootCmd); err != nil {
-		app.console.Error(err.Error())
+		app.console.Errorf("Erorr encountered %v", err.Error())
 		os.Exit(1)
 	}
 }
