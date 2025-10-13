@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
@@ -59,12 +60,35 @@ func (app *application) saveConfig() {
 }
 
 func (app *application) loadAuth() (*appConfig, error) {
-	path, _ := app.configPath()
-	app.console.Info(path)
 	var cfg appConfig
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, err
 
 	}
 	return &cfg, nil
+}
+
+func (app *application) newConfigSetCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config:set <key> <value>",
+		Short: "Set a config value",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+			value := args[1]
+
+			viper.Set(key, value)
+			app.saveConfig()
+			app.console.Infof("Updated %s = %s\n", key, value)
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+func (app *application) newConfiShowCommand() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	return cmd
 }

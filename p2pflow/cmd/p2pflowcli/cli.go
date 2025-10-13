@@ -20,8 +20,8 @@ type application struct {
 	appName string
 	config  config
 	auth    auth.Authenticator
-	logger  logger.Logger
-	console logger.Logger
+	logger  *logger.Logger
+	console *logger.Logger
 }
 
 type config struct {
@@ -45,9 +45,14 @@ func (app *application) mount() {
 	}
 
 	// register commands
+	// auth commands
 	rootCmd.AddCommand(app.newLoginCommand(app.config.auth.oauth.config))
 	rootCmd.AddCommand(app.newWhoAmICommand())
 	rootCmd.AddCommand(app.newLogOutCommand())
+
+	// config commands
+	rootCmd.AddCommand(app.newConfigSetCommand())
+	rootCmd.AddCommand(app.newConfiShowCommand())
 }
 
 func (app *application) run(rootCmd *cobra.Command) error {

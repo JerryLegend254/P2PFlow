@@ -3,6 +3,8 @@ module github.com/JerryLegend254/p2pflow
 go 1.25.0
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0
+	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.27.0
@@ -10,7 +12,6 @@ require (
 )
 
 require (
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
