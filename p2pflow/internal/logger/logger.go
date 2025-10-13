@@ -10,10 +10,10 @@ type LoggerType string
 
 const (
 	JSON    LoggerType = "json"
-	CONSOLE LoggerType = "json"
+	CONSOLE LoggerType = "console"
 )
 
-func NewLogger(t LoggerType) Logger {
+func NewLogger(t LoggerType) *Logger {
 	switch t {
 	case CONSOLE:
 		consoleCfg := zap.NewDevelopmentConfig()
@@ -22,7 +22,7 @@ func NewLogger(t LoggerType) Logger {
 		consoleCfg.EncoderConfig.CallerKey = ""
 		consoleCfg.Encoding = "console"
 		consoleLogger, _ := consoleCfg.Build()
-		return Logger{consoleLogger.Sugar()}
+		return &Logger{consoleLogger.Sugar()}
 	}
-	return Logger{zap.Must(zap.NewProduction()).Sugar()}
+	return &Logger{zap.Must(zap.NewProduction()).Sugar()}
 }

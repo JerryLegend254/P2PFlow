@@ -5,7 +5,7 @@ tmp_dir = "bin"
 [build]
   args_bin = []
   bin = "./bin/p2pflow"
-  cmd = "go build -o ./bin/p2pflow ./cmd/p2pflowcli"
+  cmd = "go build -o ./bin/p2pflow ./cmd/p2pflowcli && go build -o ./bin/p2pflow-watcher ./cmd/watcher"
   delay = 1000
   exclude_dir = ["bin"]
   exclude_file = []
