@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/JerryLegend254/p2pflow/internal/logger"
-	"github.com/fsnotify/fsnotify"
+	"github.com/JerryLegend254/p2pflow/internal/watcher"
 )
 
 func main() {
@@ -13,40 +13,34 @@ func main() {
 		logger: jsonLogger,
 	}
 
-	watcher, err := fsnotify.NewWatcher()
+	// Watch a specific test file for patch generation
+	testFile := "test.txt"
+	w, err := watcher.NewWatcher(testFile)
 	if err != nil {
 		app.logger.Fatalln(err)
 	}
-	defer watcher.Close()
 
-	err = watcher.Add(".")
-	if err != nil {
-		app.logger.Fatalln(err)
+	// Set up OnChange callback to handle patches
+	w.OnChange = func(patch string) {
+		app.logger.Infof("Patch generated: %s", patch)
 	}
 
 	errCh := make(chan error)
 
+	err = w.Start(errCh)
+	if err != nil {
+		app.logger.Fatalln(err)
+	}
+
+	// Handle errors from the watcher in a separate goroutine
 	go func() {
-		for {
-			select {
-			case event := <-watcher.Events:
-				switch {
-				case event.Op&fsnotify.Write == fsnotify.Write:
-					app.logger.Infof("Write:  %s: %s", event.Op, event.Name)
-				case event.Op&fsnotify.Create == fsnotify.Create:
-					app.logger.Infof("Create: %s: %s", event.Op, event.Name)
-				case event.Op&fsnotify.Remove == fsnotify.Remove:
-					app.logger.Infof("Remove: %s: %s", event.Op, event.Name)
-				case event.Op&fsnotify.Rename == fsnotify.Rename:
-					app.logger.Infof("Rename: %s: %s", event.Op, event.Name)
-				case event.Op&fsnotify.Chmod == fsnotify.Chmod:
-					app.logger.Infof("Chmod:  %s: %s", event.Op, event.Name)
-				}
-			case err := <-watcher.Errors:
-				errCh <- err
+		for err := range errCh {
+			if err != nil {
+				app.logger.Fatalln(err)
 			}
 		}
 	}()
 
-	app.logger.Fatalln(<-errCh)
+	// Keep the main function running
+	select {}
 }
