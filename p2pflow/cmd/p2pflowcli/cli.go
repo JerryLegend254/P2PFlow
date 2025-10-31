@@ -53,6 +53,9 @@ func (app *application) mount() {
 	// config commands
 	rootCmd.AddCommand(app.newConfigSetCommand())
 	rootCmd.AddCommand(app.newConfiShowCommand())
+
+	// collab commands
+	rootCmd.AddCommand(app.newCollabCommand())
 }
 
 func (app *application) run(rootCmd *cobra.Command) error {
