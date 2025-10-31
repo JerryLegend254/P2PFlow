@@ -6,7 +6,7 @@
 
 **Intelligent Peer-to-Peer File Synchronization for Development Teams**
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/badge/Release-v0.0.0-green.svg)](https://github.com/JerryLegend254/P2PFlow/releases)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](https://github.com/JerryLegend254/P2PFlow/actions)
@@ -100,7 +100,7 @@ P2PFlow provides **real-time, peer-to-peer file synchronization** that:
 
 #### Option 1: Build from Source
 
-**Requirements**: Go 1.21 or higher
+**Requirements**: Go 1.25 or higher
 
 ```bash
 # Clone repository
