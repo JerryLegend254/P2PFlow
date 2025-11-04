@@ -9,14 +9,26 @@ import (
 	dmp "github.com/sergi/go-diff/diffmatchpatch"
 )
 
+// FileInfo represents metadata about a file in the session
+type FileInfo struct {
+	Path         string    `json:"path"`          // Relative path from RootPath
+	Hash         string    `json:"hash"`          // SHA256 hash for integrity
+	Size         int64     `json:"size"`          // File size in bytes
+	LastModified time.Time `json:"last_modified"` // Last modification time
+	Content      string    `json:"content"`       // Current file content
+	Version      int       `json:"version"`       // File-specific version
+}
+
 // Session represents a collaboration session
 type Session struct {
-	ID        string            `json:"id"`
-	FilePath  string            `json:"file_path"`
-	CreatedAt time.Time         `json:"created_at"`
-	Agents    map[string]*Agent `json:"agents"`
-	Content   string            `json:"content"`
-	Version   int               `json:"version"`
+	ID        string               `json:"id"`
+	FilePath  string               `json:"file_path"`  // Deprecated: kept for backward compatibility
+	RootPath  string               `json:"root_path"`  // Base directory for the session
+	Files     map[string]*FileInfo `json:"files"`      // Map of relative path -> FileInfo
+	CreatedAt time.Time            `json:"created_at"`
+	Agents    map[string]*Agent    `json:"agents"`
+	Content   string               `json:"content"`    // Deprecated: kept for backward compatibility
+	Version   int                  `json:"version"`
 }
 
 // Agent represents a participant in the collaboration
@@ -52,17 +64,32 @@ func NewCollaborationEngine() *CollaborationEngine {
 }
 
 // CreateSession creates a new collaboration session
+// For backward compatibility, it accepts a single file path and content
+// For multi-file sessions, use CreateSessionWithFiles instead
 func (ce *CollaborationEngine) CreateSession(sessionID, filePath, content string) *Session {
 	ce.mu.Lock()
 	defer ce.mu.Unlock()
 
 	session := &Session{
 		ID:        sessionID,
-		FilePath:  filePath,
+		FilePath:  filePath,  // Backward compatibility
+		RootPath:  "",
+		Files:     make(map[string]*FileInfo),
 		CreatedAt: time.Now(),
 		Agents:    make(map[string]*Agent),
-		Content:   content,
+		Content:   content,   // Backward compatibility
 		Version:   0,
+	}
+
+	// If a file path is provided, add it as the first file
+	if filePath != "" && content != "" {
+		session.Files[filePath] = &FileInfo{
+			Path:         filePath,
+			Content:      content,
+			Size:         int64(len(content)),
+			LastModified: time.Now(),
+			Version:      0,
+		}
 	}
 
 	ce.sessions[sessionID] = session
@@ -232,4 +259,79 @@ func (s *Session) ToJSON() ([]byte, error) {
 // ToJSON serializes a change event to JSON
 func (ce *ChangeEvent) ToJSON() ([]byte, error) {
 	return json.Marshal(ce)
+}
+
+// AddFile adds a file to the session
+func (ce *CollaborationEngine) AddFile(sessionID, filePath, content string) error {
+	ce.mu.Lock()
+	defer ce.mu.Unlock()
+
+	session, exists := ce.sessions[sessionID]
+	if !exists {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	session.Files[filePath] = &FileInfo{
+		Path:         filePath,
+		Content:      content,
+		Size:         int64(len(content)),
+		LastModified: time.Now(),
+		Version:      0,
+	}
+
+	return nil
+}
+
+// GetFile retrieves a file from the session
+func (ce *CollaborationEngine) GetFile(sessionID, filePath string) (*FileInfo, error) {
+	ce.mu.RLock()
+	defer ce.mu.RUnlock()
+
+	session, exists := ce.sessions[sessionID]
+	if !exists {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	file, exists := session.Files[filePath]
+	if !exists {
+		return nil, fmt.Errorf("file %s not found in session", filePath)
+	}
+
+	return file, nil
+}
+
+// ListFiles returns all files in a session
+func (ce *CollaborationEngine) ListFiles(sessionID string) (map[string]*FileInfo, error) {
+	ce.mu.RLock()
+	defer ce.mu.RUnlock()
+
+	session, exists := ce.sessions[sessionID]
+	if !exists {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	return session.Files, nil
+}
+
+// UpdateFileContent updates the content of a file in the session
+func (ce *CollaborationEngine) UpdateFileContent(sessionID, filePath, newContent string) error {
+	ce.mu.Lock()
+	defer ce.mu.Unlock()
+
+	session, exists := ce.sessions[sessionID]
+	if !exists {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	file, exists := session.Files[filePath]
+	if !exists {
+		return fmt.Errorf("file %s not found in session", filePath)
+	}
+
+	file.Content = newContent
+	file.Size = int64(len(newContent))
+	file.LastModified = time.Now()
+	file.Version++
+
+	return nil
 }

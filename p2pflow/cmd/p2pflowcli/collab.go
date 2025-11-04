@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/JerryLegend254/p2pflow/internal/collab"
@@ -48,15 +49,13 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				return fmt.Errorf("file path is required")
 			}
 
-			// Check if file exists
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				return fmt.Errorf("file does not exist: %s", filePath)
+			// Check if path exists
+			info, err := os.Stat(filePath)
+			if os.IsNotExist(err) {
+				return fmt.Errorf("path does not exist: %s", filePath)
 			}
-
-			// Read file content
-			content, err := os.ReadFile(filePath)
 			if err != nil {
-				return fmt.Errorf("failed to read file: %w", err)
+				return fmt.Errorf("failed to stat path: %w", err)
 			}
 
 			// Generate session ID
@@ -71,7 +70,7 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 
 			app.console.Infof("Starting collaboration session...")
 			app.console.Infof("Session ID: %s", sessionID)
-			app.console.Infof("File: %s", filePath)
+			app.console.Infof("Path: %s", filePath)
 			app.console.Infof("Agent: %s", agentName)
 
 			// Create context
@@ -90,17 +89,91 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				return fmt.Errorf("failed to start P2P node: %w", err)
 			}
 
-			// Create session
-			session, err := node.CreateSession(sessionID, filePath, string(content))
-			if err != nil {
-				return fmt.Errorf("failed to create session: %w", err)
+			var session *collab.Session
+
+			if info.IsDir() {
+				// Directory mode - scan all files
+				app.console.Infof("Scanning directory...")
+
+				// Create session with empty content for backward compatibility
+				session, err = node.CreateSession(sessionID, "", "")
+				if err != nil {
+					return fmt.Errorf("failed to create session: %w", err)
+				}
+
+				// Set the root path for the session
+				session.RootPath = filePath
+
+				// Scan and add all files
+				fileCount := 0
+				err = filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return err
+					}
+
+					// Skip directories and hidden files
+					if info.IsDir() || info.Name()[0] == '.' {
+						return nil
+					}
+
+					// Read file content
+					content, err := os.ReadFile(path)
+					if err != nil {
+						app.console.Warnf("Failed to read %s: %v", path, err)
+						return nil
+					}
+
+					// Add file to session
+					if err := node.GetCollabEngine().AddFile(sessionID, path, string(content)); err != nil {
+						app.console.Warnf("Failed to add %s to session: %v", path, err)
+						return nil
+					}
+
+					fileCount++
+					return nil
+				})
+
+				if err != nil {
+					return fmt.Errorf("failed to scan directory: %w", err)
+				}
+
+				app.console.Infof("Added %d files to session", fileCount)
+
+			} else {
+				// Single file mode (backward compatibility)
+				content, err := os.ReadFile(filePath)
+				if err != nil {
+					return fmt.Errorf("failed to read file: %w", err)
+				}
+
+				session, err = node.CreateSession(sessionID, filePath, string(content))
+				if err != nil {
+					return fmt.Errorf("failed to create session: %w", err)
+				}
 			}
 
 			app.console.Infof("Session created: %s", session.ID)
 			app.console.Infof("Listening on port: %d", port)
 			app.console.Infof("Node ID: %s", node.GetHost().ID())
+
+			// Print multiaddress for manual connection
+			addrs := node.GetHost().Addrs()
+			if len(addrs) > 0 {
+				app.console.Infof("\nNode multiaddresses:")
+				for _, addr := range addrs {
+					fullAddr := fmt.Sprintf("%s/p2p/%s", addr, node.GetHost().ID())
+					app.console.Infof("  %s", fullAddr)
+				}
+			}
+
 			app.console.Infof("\nPeers can join using:")
-			app.console.Infof("  p2pflow collab join %s", sessionID)
+			app.console.Infof("  p2pflow collab join %s --port <port>", sessionID)
+			if len(addrs) > 0 {
+				// Show example with first address
+				firstAddr := fmt.Sprintf("%s/p2p/%s", addrs[0], node.GetHost().ID())
+				app.console.Infof("\nOr with explicit peer connection:")
+				app.console.Infof("  p2pflow collab join %s --port <port> --peer %s", sessionID, firstAddr)
+			}
 
 			// Set up peer connection handler
 			node.SetOnPeerConnected(func(peerID peer.ID) {
@@ -148,6 +221,7 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 func (app *application) newCollabJoinCommand() *cobra.Command {
 	var filePath string
 	var port int
+	var bootstrapPeer string
 
 	cmd := &cobra.Command{
 		Use:   "join <session-id>",
@@ -186,6 +260,16 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 			// Start the node
 			if err := node.Start(); err != nil {
 				return fmt.Errorf("failed to start P2P node: %w", err)
+			}
+
+			// Connect to bootstrap peer if provided
+			if bootstrapPeer != "" {
+				app.console.Infof("Connecting to bootstrap peer: %s", bootstrapPeer)
+				if err := node.ConnectToPeer(bootstrapPeer); err != nil {
+					app.console.Warnf("Failed to connect to bootstrap peer: %v", err)
+				} else {
+					app.console.Infof("Successfully connected to bootstrap peer")
+				}
 			}
 
 			// Prepare initial content
@@ -257,6 +341,7 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Local file path to sync")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVarP(&bootstrapPeer, "peer", "b", "", "Bootstrap peer multiaddress (e.g., /ip4/127.0.0.1/tcp/4001/p2p/12D3...)")
 
 	return cmd
 }

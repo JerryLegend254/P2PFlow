@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/collab"
@@ -61,62 +62,48 @@ func NewWatcher(path string) (*Watcher, error) {
 }
 
 func (w *Watcher) Start(errCh chan<- error) error {
-	if err := w.watcher.Add(w.path); err != nil {
+	// Check if path is a directory or file
+	info, err := os.Stat(w.path)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Watching: %s\n", w.path)
+	if info.IsDir() {
+		// Watch directory - add all files recursively
+		if err := w.addDirRecursive(w.path); err != nil {
+			return err
+		}
+		fmt.Printf("Watching directory: %s\n", w.path)
+	} else {
+		// Watch single file
+		if err := w.watcher.Add(w.path); err != nil {
+			return err
+		}
+		fmt.Printf("Watching file: %s\n", w.path)
+	}
 
-	// TODO: watch directory
-	// watch single file for now for simplicity due to patches
 	go func() {
 		defer w.watcher.Close()
 		for {
 			select {
 			case event := <-w.watcher.Events:
 				fmt.Printf("Event received: %s on %s\n", event.Op, event.Name)
-				// Only process write events for files we're watching
-				if event.Op&fsnotify.Write == fsnotify.Write && event.Name == w.path {
-					fmt.Printf("Write detected: %s\n", event.Name)
 
-					// Small debounce to avoid excessive patch generation
-					time.Sleep(50 * time.Millisecond)
-
-					// Read current file content
-					b, err := os.ReadFile(w.path)
-					if err != nil {
-						fmt.Printf("Error reading file: %v\n", err)
-						continue
-					}
-
-					cur := string(b)
-
-					// Skip if content hasn't changed
-					if cur == w.last {
-						continue
-					}
-
-					diffs := w.Dmp.DiffMain(w.last, cur, false)
-					patch := w.Dmp.PatchToText(w.Dmp.PatchMake(diffs))
-
-					w.last = cur
-
-					if w.OnChange != nil {
-						w.OnChange(patch)
-					}
-
-					fmt.Printf("Generated patch: %s\n", patch)
-				} else {
-					switch {
-					case event.Op&fsnotify.Create == fsnotify.Create:
-						fmt.Printf("Create: %s: %s\n", event.Op, event.Name)
-					case event.Op&fsnotify.Remove == fsnotify.Remove:
-						fmt.Printf("Remove: %s: %s\n", event.Op, event.Name)
-					case event.Op&fsnotify.Rename == fsnotify.Rename:
-						fmt.Printf("Rename: %s: %s\n", event.Op, event.Name)
-					case event.Op&fsnotify.Chmod == fsnotify.Chmod:
-						fmt.Printf("Chmod:  %s: %s\n", event.Op, event.Name)
-					}
+				// Handle different event types
+				switch {
+				case event.Op&fsnotify.Write == fsnotify.Write:
+					w.handleFileWrite(event.Name)
+				case event.Op&fsnotify.Create == fsnotify.Create:
+					w.handleFileCreate(event.Name)
+				case event.Op&fsnotify.Remove == fsnotify.Remove:
+					fmt.Printf("Remove: %s\n", event.Name)
+					// TODO: Broadcast file deletion
+				case event.Op&fsnotify.Rename == fsnotify.Rename:
+					fmt.Printf("Rename: %s\n", event.Name)
+					// TODO: Broadcast file rename
+				case event.Op&fsnotify.Chmod == fsnotify.Chmod:
+					fmt.Printf("Chmod: %s\n", event.Name)
+					// Ignore permission changes
 				}
 			case err := <-w.watcher.Errors:
 				if err != nil {
@@ -139,4 +126,99 @@ func generateAgentID() string {
 	bytes := make([]byte, 4)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// addDirRecursive adds a directory and all its subdirectories to the watcher
+func (w *Watcher) addDirRecursive(dir string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip hidden files and directories
+		if info.IsDir() && info.Name()[0] == '.' {
+			return filepath.SkipDir
+		}
+
+		// Add directories to watcher
+		if info.IsDir() {
+			if err := w.watcher.Add(path); err != nil {
+				return err
+			}
+			fmt.Printf("  Added to watch: %s\n", path)
+		}
+
+		return nil
+	})
+}
+
+// handleFileWrite handles write events to files
+func (w *Watcher) handleFileWrite(filePath string) {
+	fmt.Printf("Write detected: %s\n", filePath)
+
+	// Small debounce to avoid excessive patch generation
+	time.Sleep(50 * time.Millisecond)
+
+	// Read current file content
+	b, err := os.ReadFile(filePath)
+	if err != nil {
+		fmt.Printf("Error reading file: %v\n", err)
+		return
+	}
+
+	cur := string(b)
+
+	// Skip if content hasn't changed
+	if cur == w.last {
+		return
+	}
+
+	diffs := w.Dmp.DiffMain(w.last, cur, false)
+	patch := w.Dmp.PatchToText(w.Dmp.PatchMake(diffs))
+
+	w.last = cur
+
+	if w.OnChange != nil {
+		w.OnChange(patch)
+	}
+
+	fmt.Printf("Generated patch: %s\n", patch)
+}
+
+// handleFileCreate handles creation of new files or directories
+func (w *Watcher) handleFileCreate(filePath string) {
+	fmt.Printf("Create: %s\n", filePath)
+
+	// Check if it's a directory
+	info, err := os.Stat(filePath)
+	if err != nil {
+		fmt.Printf("Error stating file: %v\n", err)
+		return
+	}
+
+	if info.IsDir() {
+		// Add new directory to watcher
+		if err := w.watcher.Add(filePath); err != nil {
+			fmt.Printf("Error adding directory to watcher: %v\n", err)
+		} else {
+			fmt.Printf("Added new directory to watch: %s\n", filePath)
+		}
+	} else {
+		// New file created - treat as a write with empty previous content
+		b, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Printf("Error reading new file: %v\n", err)
+			return
+		}
+
+		content := string(b)
+		diffs := w.Dmp.DiffMain("", content, false)
+		patch := w.Dmp.PatchToText(w.Dmp.PatchMake(diffs))
+
+		if w.OnChange != nil {
+			w.OnChange(patch)
+		}
+
+		fmt.Printf("Generated patch for new file: %s\n", patch)
+	}
 }

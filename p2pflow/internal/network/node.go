@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -44,13 +45,15 @@ type P2PNode struct {
 	sessionManager *collab.SessionManager
 
 	// Node state
-	nodeID            string
-	sessionID         string
-	peers             map[peer.ID]*PeerInfo
-	peersMutex        sync.RWMutex
-	ctx               context.Context
-	cancel            context.CancelFunc
-	syncResponseChan  chan *SyncResponse
+	nodeID                   string
+	sessionID                string
+	peers                    map[peer.ID]*PeerInfo
+	peersMutex               sync.RWMutex
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	syncResponseChan         chan *SyncResponse
+	fileManifestResponseChan chan *FileManifestResponse
+	fileTransferChan         chan *FileTransfer
 
 	// Callbacks
 	onPeerConnected    func(peer.ID)
@@ -87,6 +90,34 @@ type SyncResponse struct {
 	Session *collab.Session `json:"session"`
 }
 
+// FileManifestRequest requests the list of all files in a session
+type FileManifestRequest struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+}
+
+// FileManifestResponse contains the list of files in a session
+type FileManifestResponse struct {
+	SessionID string                      `json:"session_id"`
+	Files     map[string]*collab.FileInfo `json:"files"`
+}
+
+// FileRequest requests the content of a specific file
+type FileRequest struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	FilePath  string `json:"file_path"`
+}
+
+// FileTransfer contains the content of a file being transferred
+type FileTransfer struct {
+	SessionID string `json:"session_id"`
+	FilePath  string `json:"file_path"`
+	Content   string `json:"content"`
+	Hash      string `json:"hash"`
+	Size      int64  `json:"size"`
+}
+
 // MessageType represents the type of message
 type MessageType int
 
@@ -101,6 +132,14 @@ const (
 	MessageTypeSyncResponse
 	// MessageTypePing keeps the connection alive
 	MessageTypePing
+	// MessageTypeFileManifestRequest requests list of all files in session
+	MessageTypeFileManifestRequest
+	// MessageTypeFileManifestResponse responds with list of files
+	MessageTypeFileManifestResponse
+	// MessageTypeFileRequest requests content of a specific file
+	MessageTypeFileRequest
+	// MessageTypeFileTransfer sends file content to peer
+	MessageTypeFileTransfer
 )
 
 // NewP2PNode creates a new P2P node
@@ -275,33 +314,87 @@ func (n *P2PNode) JoinSession(sessionID, agentName string, content string) error
 		// Session doesn't exist locally, request it from peers
 		log.Printf("Session not found locally, requesting sync from peers...")
 
-		if err := n.requestSessionSync(sessionID, agentName); err != nil {
-			return fmt.Errorf("failed to request session sync: %w", err)
+		// Wait a bit for peer discovery to complete and peers to connect
+		log.Printf("Waiting for peer discovery...")
+		time.Sleep(2 * time.Second)
+
+		// Check libp2p host level connections
+		hostPeers := n.host.Network().Peers()
+		log.Printf("Host-level connected peers: %d", len(hostPeers))
+		for i, p := range hostPeers {
+			log.Printf("  Peer %d: %s", i+1, p)
 		}
 
-		// Wait for sync response with timeout
-		select {
-		case syncResp := <-n.syncResponseChan:
-			if syncResp == nil || syncResp.Session == nil {
-				return fmt.Errorf("received invalid sync response")
+		// Check if we have any peers in the topic
+		topicPeers := n.topic.ListPeers()
+		log.Printf("Topic-level peers: %d", len(topicPeers))
+		for i, p := range topicPeers {
+			log.Printf("  Topic peer %d: %s", i+1, p)
+		}
+
+		if len(topicPeers) == 0 {
+			log.Printf("No peers in topic yet, waiting longer for GossipSub mesh formation...")
+			// Wait a bit more for mDNS to discover peers and GossipSub mesh to form
+			time.Sleep(3 * time.Second)
+
+			hostPeers = n.host.Network().Peers()
+			log.Printf("After additional wait - Host-level peers: %d", len(hostPeers))
+
+			topicPeers = n.topic.ListPeers()
+			log.Printf("After additional wait - Topic-level peers: %d", len(topicPeers))
+		}
+
+		// Send sync request (will be retried)
+		maxRetries := 3
+		retryDelay := 3 * time.Second
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			log.Printf("Sending sync request (attempt %d/%d)...", attempt, maxRetries)
+
+			if err := n.requestSessionSync(sessionID, agentName); err != nil {
+				return fmt.Errorf("failed to request session sync: %w", err)
 			}
 
-			log.Printf("Received session state from peer")
+			// Wait for sync response with timeout
+			select {
+			case syncResp := <-n.syncResponseChan:
+				if syncResp == nil || syncResp.Session == nil {
+					log.Printf("Received invalid sync response, retrying...")
+					if attempt < maxRetries {
+						time.Sleep(retryDelay)
+						continue
+					}
+					return fmt.Errorf("received invalid sync response")
+				}
 
-			// Create session from the received state
-			session = syncResp.Session
-			n.collabEngine.ImportSession(session)
+				log.Printf("Received session state from peer")
 
-			// Save session locally
-			if err := n.sessionManager.SaveSession(session); err != nil {
-				log.Printf("Warning: failed to save session locally: %v", err)
+				// Create session from the received state
+				session = syncResp.Session
+				n.collabEngine.ImportSession(session)
+
+				// Save session locally
+				if err := n.sessionManager.SaveSession(session); err != nil {
+					log.Printf("Warning: failed to save session locally: %v", err)
+				}
+
+				// Success! Break out of retry loop
+				goto sessionSynced
+
+			case <-time.After(SyncTimeout):
+				if attempt < maxRetries {
+					log.Printf("Sync request timed out, retrying...")
+					hostPeers := n.host.Network().Peers()
+					topicPeers = n.topic.ListPeers()
+					log.Printf("Current host-level peers: %d, topic-level peers: %d", len(hostPeers), len(topicPeers))
+					time.Sleep(retryDelay)
+					continue
+				}
+				return fmt.Errorf("timeout waiting for session sync response after %d attempts - no peers available or session not found", maxRetries)
+
+			case <-n.ctx.Done():
+				return fmt.Errorf("context cancelled while waiting for sync")
 			}
-
-		case <-time.After(SyncTimeout):
-			return fmt.Errorf("timeout waiting for session sync response - no peers available or session not found")
-
-		case <-n.ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for sync")
 		}
 	} else {
 		log.Printf("Loaded existing session from local storage: %s", session.ID)
@@ -309,6 +402,97 @@ func (n *P2PNode) JoinSession(sessionID, agentName string, content string) error
 		n.collabEngine.ImportSession(session)
 	}
 
+sessionSynced:
+	// Now sync files if we don't have them locally
+	log.Printf("Starting file synchronization...")
+
+	// Create channels for file manifest and transfer responses
+	n.fileManifestResponseChan = make(chan *FileManifestResponse, 1)
+	n.fileTransferChan = make(chan *FileTransfer, 10) // Buffer for multiple files
+
+	// Request file manifest from peers
+	maxRetries := 3
+	retryDelay := 3 * time.Second
+	var fileManifest *FileManifestResponse
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		log.Printf("Requesting file manifest (attempt %d/%d)...", attempt, maxRetries)
+
+		if err := n.requestFileManifest(sessionID); err != nil {
+			log.Printf("Failed to send file manifest request: %v", err)
+			if attempt < maxRetries {
+				time.Sleep(retryDelay)
+				continue
+			}
+			return fmt.Errorf("failed to request file manifest: %w", err)
+		}
+
+		// Wait for file manifest response
+		select {
+		case manifest := <-n.fileManifestResponseChan:
+			log.Printf("Received file manifest with %d files", len(manifest.Files))
+			fileManifest = manifest
+			goto filesReceived
+
+		case <-time.After(SyncTimeout):
+			if attempt < maxRetries {
+				log.Printf("File manifest request timed out, retrying...")
+				time.Sleep(retryDelay)
+				continue
+			}
+			log.Printf("Warning: Could not get file manifest from peers, continuing without files")
+			goto skipFileSync
+
+		case <-n.ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for file manifest")
+		}
+	}
+
+filesReceived:
+	// Download each file
+	if fileManifest != nil && len(fileManifest.Files) > 0 {
+		log.Printf("Downloading %d files...", len(fileManifest.Files))
+
+		for filePath := range fileManifest.Files {
+			log.Printf("Requesting file: %s", filePath)
+
+			if err := n.requestFile(sessionID, filePath); err != nil {
+				log.Printf("Failed to request file %s: %v", filePath, err)
+				continue
+			}
+
+			// Wait for file transfer
+			select {
+			case transfer := <-n.fileTransferChan:
+				log.Printf("Received file: %s (%d bytes)", transfer.FilePath, transfer.Size)
+
+				// Add file to the session
+				if err := n.collabEngine.AddFile(sessionID, transfer.FilePath, transfer.Content); err != nil {
+					log.Printf("Failed to add file %s to session: %v", transfer.FilePath, err)
+					continue
+				}
+
+				// Save file to local filesystem
+				if err := os.WriteFile(transfer.FilePath, []byte(transfer.Content), 0644); err != nil {
+					log.Printf("Failed to write file %s: %v", transfer.FilePath, err)
+					continue
+				}
+
+				log.Printf("Successfully synced file: %s", transfer.FilePath)
+
+			case <-time.After(SyncTimeout):
+				log.Printf("Timeout waiting for file %s, skipping", filePath)
+				continue
+
+			case <-n.ctx.Done():
+				return fmt.Errorf("context cancelled while downloading files")
+			}
+		}
+
+		log.Printf("File synchronization complete")
+	}
+
+skipFileSync:
 	// Add ourselves to the session
 	_, err = n.collabEngine.JoinSession(sessionID, n.nodeID, agentName)
 	if err != nil {
@@ -393,6 +577,54 @@ func (n *P2PNode) GetSessionID() string {
 	return n.sessionID
 }
 
+// ConnectToPeer manually connects to a peer using its multiaddress
+func (n *P2PNode) ConnectToPeer(peerAddr string) error {
+	// Parse the multiaddress
+	maddr, err := multiaddr.NewMultiaddr(peerAddr)
+	if err != nil {
+		return fmt.Errorf("invalid multiaddress: %w", err)
+	}
+
+	// Extract peer info
+	peerInfo, err := peer.AddrInfoFromP2pAddr(maddr)
+	if err != nil {
+		return fmt.Errorf("failed to extract peer info: %w", err)
+	}
+
+	log.Printf("Connecting to peer %s at %v", peerInfo.ID, peerInfo.Addrs)
+
+	// Connect to the peer
+	if err := n.host.Connect(n.ctx, *peerInfo); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	log.Printf("Successfully connected to peer %s", peerInfo.ID)
+
+	// Store peer info
+	n.peersMutex.Lock()
+	n.peers[peerInfo.ID] = &PeerInfo{
+		ID:        peerInfo.ID,
+		Connected: true,
+	}
+	n.peersMutex.Unlock()
+
+	// Open a stream to establish the connection
+	stream, err := n.host.NewStream(n.ctx, peerInfo.ID, ProtocolID)
+	if err != nil {
+		log.Printf("Warning: failed to open stream to peer %s: %v", peerInfo.ID, err)
+		// Connection is still valid even if stream fails
+	} else {
+		log.Printf("Opened stream to peer %s", peerInfo.ID)
+		// Keep the stream open briefly then close
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			stream.Close()
+		}()
+	}
+
+	return nil
+}
+
 // private methods
 
 func (n *P2PNode) handleStream(s network.Stream) {
@@ -414,10 +646,12 @@ func (n *P2PNode) handleStream(s network.Stream) {
 }
 
 func (n *P2PNode) handleMessages() {
+	log.Printf("Message handler started, waiting for messages...")
 	for {
 		msg, err := n.sub.Next(n.ctx)
 		if err != nil {
 			if err == context.Canceled {
+				log.Printf("Message handler stopped (context cancelled)")
 				return
 			}
 			log.Printf("Error receiving message: %v", err)
@@ -426,6 +660,7 @@ func (n *P2PNode) handleMessages() {
 
 		// Ignore messages from ourselves
 		if msg.GetFrom() == n.host.ID() {
+			log.Printf("Ignoring message from self")
 			continue
 		}
 
@@ -435,11 +670,27 @@ func (n *P2PNode) handleMessages() {
 			continue
 		}
 
-		log.Printf("Received message type %d from peer: %s", message.Type, msg.GetFrom())
+		messageTypeNames := map[MessageType]string{
+			MessageTypeJoin:                 "JOIN",
+			MessageTypeChange:               "CHANGE",
+			MessageTypeSync:                 "SYNC",
+			MessageTypeSyncResponse:         "SYNC_RESPONSE",
+			MessageTypePing:                 "PING",
+			MessageTypeFileManifestRequest:  "FILE_MANIFEST_REQUEST",
+			MessageTypeFileManifestResponse: "FILE_MANIFEST_RESPONSE",
+			MessageTypeFileRequest:          "FILE_REQUEST",
+			MessageTypeFileTransfer:         "FILE_TRANSFER",
+		}
+		typeName := messageTypeNames[message.Type]
+		if typeName == "" {
+			typeName = fmt.Sprintf("UNKNOWN(%d)", message.Type)
+		}
+
+		log.Printf("Received %s message from peer %s (session: %s)", typeName, msg.GetFrom(), message.SessionID)
 
 		// Handle the message
 		if err := n.handleMessage(&message); err != nil {
-			log.Printf("Error handling message: %v", err)
+			log.Printf("Error handling %s message: %v", typeName, err)
 		}
 
 		// Call callback if set
@@ -459,6 +710,14 @@ func (n *P2PNode) handleMessage(msg *Message) error {
 		return n.handleSync(msg)
 	case MessageTypeSyncResponse:
 		return n.handleSyncResponse(msg)
+	case MessageTypeFileManifestRequest:
+		return n.handleFileManifestRequest(msg)
+	case MessageTypeFileManifestResponse:
+		return n.handleFileManifestResponse(msg)
+	case MessageTypeFileRequest:
+		return n.handleFileRequest(msg)
+	case MessageTypeFileTransfer:
+		return n.handleFileTransfer(msg)
 	default:
 		return fmt.Errorf("unknown message type: %d", msg.Type)
 	}
@@ -612,22 +871,46 @@ type nodeNotifee struct {
 }
 
 func (nn *nodeNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	log.Printf("Found peer: %s", pi.ID)
+	log.Printf("mDNS: Found peer %s with %d addresses", pi.ID, len(pi.Addrs))
 
-	// Connect to the peer
-	err := nn.node.host.Connect(nn.node.ctx, pi)
-	if err != nil {
-		log.Printf("Failed to connect to peer %s: %v", pi.ID, err)
+	// Check if already connected
+	if nn.node.host.Network().Connectedness(pi.ID) == network.Connected {
+		log.Printf("mDNS: Already connected to peer %s", pi.ID)
+
+		// Store peer info if not already stored
+		nn.node.peersMutex.Lock()
+		if _, exists := nn.node.peers[pi.ID]; !exists {
+			nn.node.peers[pi.ID] = &PeerInfo{
+				ID:        pi.ID,
+				Connected: true,
+			}
+		}
+		nn.node.peersMutex.Unlock()
 		return
 	}
 
-	log.Printf("Connected to peer: %s", pi.ID)
+	// Connect to the peer
+	log.Printf("mDNS: Connecting to peer %s...", pi.ID)
+	err := nn.node.host.Connect(nn.node.ctx, pi)
+	if err != nil {
+		log.Printf("mDNS: Failed to connect to peer %s: %v", pi.ID, err)
+		return
+	}
+
+	log.Printf("mDNS: Successfully connected to peer: %s", pi.ID)
 
 	// Open a stream
 	stream, err := nn.node.host.NewStream(nn.node.ctx, pi.ID, ProtocolID)
 	if err != nil {
-		log.Printf("Failed to open stream to peer %s: %v", pi.ID, err)
-		return
+		log.Printf("mDNS: Failed to open stream to peer %s: %v", pi.ID, err)
+		// Connection is still valid even if stream fails
+	} else {
+		log.Printf("mDNS: Opened stream to peer %s", pi.ID)
+		// Keep the stream open briefly then close
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			stream.Close()
+		}()
 	}
 
 	// Store peer info
@@ -638,13 +921,11 @@ func (nn *nodeNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 	nn.node.peersMutex.Unlock()
 
+	log.Printf("mDNS: Stored peer info for %s. Total peers: %d", pi.ID, len(nn.node.peers))
+
 	if nn.node.onPeerConnected != nil {
 		nn.node.onPeerConnected(pi.ID)
 	}
-
-	// Keep the stream open
-	// In a real implementation, you'd want to handle the stream properly
-	defer stream.Close()
 }
 
 // Utility functions
@@ -658,4 +939,196 @@ func generateNodeID() string {
 // ValidateMessage validates a pubsub message before it's processed
 func ValidateMessage(msg *pubsub_pb.Message) error {
 	return nil // Add validation logic if needed
+}
+
+// handleFileManifestRequest responds with the list of files in the session
+func (n *P2PNode) handleFileManifestRequest(msg *Message) error {
+	var req FileManifestRequest
+	if err := json.Unmarshal(msg.Payload, &req); err != nil {
+		return fmt.Errorf("failed to unmarshal file manifest request: %w", err)
+	}
+
+	log.Printf("Received file manifest request for session %s from agent %s", req.SessionID, req.AgentID)
+
+	// Get the session files
+	files, err := n.collabEngine.ListFiles(req.SessionID)
+	if err != nil {
+		log.Printf("Session %s not found, cannot respond to file manifest request", req.SessionID)
+		return nil // Don't propagate error
+	}
+
+	// Create response
+	resp := &FileManifestResponse{
+		SessionID: req.SessionID,
+		Files:     files,
+	}
+
+	// Serialize the response
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Errorf("failed to marshal file manifest response: %w", err)
+	}
+
+	// Create response message
+	responseMsg := &Message{
+		Type:      MessageTypeFileManifestResponse,
+		SessionID: req.SessionID,
+		AgentID:   n.nodeID,
+		Payload:   payload,
+	}
+
+	// Send the response
+	if err := n.sendMessage(responseMsg); err != nil {
+		return fmt.Errorf("failed to send file manifest response: %w", err)
+	}
+
+	log.Printf("Sent file manifest to peer %s (%d files)", req.AgentID, len(files))
+	return nil
+}
+
+// handleFileManifestResponse processes the file manifest from a peer
+func (n *P2PNode) handleFileManifestResponse(msg *Message) error {
+	var resp FileManifestResponse
+	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+		return fmt.Errorf("failed to unmarshal file manifest response: %w", err)
+	}
+
+	log.Printf("Received file manifest from peer %s (%d files)", msg.AgentID, len(resp.Files))
+
+	// Send the response through the channel if it's being waited on
+	if n.fileManifestResponseChan != nil {
+		select {
+		case n.fileManifestResponseChan <- &resp:
+			log.Printf("Delivered file manifest to waiting goroutine")
+		default:
+			log.Printf("No goroutine waiting for file manifest")
+		}
+	}
+
+	return nil
+}
+
+// handleFileRequest sends the requested file content to a peer
+func (n *P2PNode) handleFileRequest(msg *Message) error {
+	var req FileRequest
+	if err := json.Unmarshal(msg.Payload, &req); err != nil {
+		return fmt.Errorf("failed to unmarshal file request: %w", err)
+	}
+
+	log.Printf("Received file request for %s from agent %s", req.FilePath, req.AgentID)
+
+	// Get the file from the session
+	file, err := n.collabEngine.GetFile(req.SessionID, req.FilePath)
+	if err != nil {
+		log.Printf("File %s not found in session %s", req.FilePath, req.SessionID)
+		return nil // Don't propagate error
+	}
+
+	// Create file transfer
+	transfer := &FileTransfer{
+		SessionID: req.SessionID,
+		FilePath:  req.FilePath,
+		Content:   file.Content,
+		Hash:      file.Hash,
+		Size:      file.Size,
+	}
+
+	// Serialize the transfer
+	payload, err := json.Marshal(transfer)
+	if err != nil {
+		return fmt.Errorf("failed to marshal file transfer: %w", err)
+	}
+
+	// Create response message
+	responseMsg := &Message{
+		Type:      MessageTypeFileTransfer,
+		SessionID: req.SessionID,
+		AgentID:   n.nodeID,
+		Payload:   payload,
+	}
+
+	// Send the response
+	if err := n.sendMessage(responseMsg); err != nil {
+		return fmt.Errorf("failed to send file transfer: %w", err)
+	}
+
+	log.Printf("Sent file %s to peer %s (%d bytes)", req.FilePath, req.AgentID, file.Size)
+	return nil
+}
+
+// handleFileTransfer processes a file transfer from a peer
+func (n *P2PNode) handleFileTransfer(msg *Message) error {
+	var transfer FileTransfer
+	if err := json.Unmarshal(msg.Payload, &transfer); err != nil {
+		return fmt.Errorf("failed to unmarshal file transfer: %w", err)
+	}
+
+	log.Printf("Received file transfer for %s from peer %s (%d bytes)", transfer.FilePath, msg.AgentID, transfer.Size)
+
+	// Send the transfer through the channel if it's being waited on
+	if n.fileTransferChan != nil {
+		select {
+		case n.fileTransferChan <- &transfer:
+			log.Printf("Delivered file transfer to waiting goroutine")
+		default:
+			log.Printf("No goroutine waiting for file transfer")
+		}
+	}
+
+	return nil
+}
+
+// requestFileManifest requests the list of files from peers
+func (n *P2PNode) requestFileManifest(sessionID string) error {
+	req := &FileManifestRequest{
+		SessionID: sessionID,
+		AgentID:   n.nodeID,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal file manifest request: %w", err)
+	}
+
+	msg := &Message{
+		Type:      MessageTypeFileManifestRequest,
+		SessionID: sessionID,
+		AgentID:   n.nodeID,
+		Payload:   payload,
+	}
+
+	if err := n.sendMessage(msg); err != nil {
+		return fmt.Errorf("failed to send file manifest request: %w", err)
+	}
+
+	log.Printf("Sent file manifest request for session %s", sessionID)
+	return nil
+}
+
+// requestFile requests a specific file from peers
+func (n *P2PNode) requestFile(sessionID, filePath string) error {
+	req := &FileRequest{
+		SessionID: sessionID,
+		AgentID:   n.nodeID,
+		FilePath:  filePath,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal file request: %w", err)
+	}
+
+	msg := &Message{
+		Type:      MessageTypeFileRequest,
+		SessionID: sessionID,
+		AgentID:   n.nodeID,
+		Payload:   payload,
+	}
+
+	if err := n.sendMessage(msg); err != nil {
+		return fmt.Errorf("failed to send file request: %w", err)
+	}
+
+	log.Printf("Sent file request for %s in session %s", filePath, sessionID)
+	return nil
 }
