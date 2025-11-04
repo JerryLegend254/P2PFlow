@@ -43,6 +43,7 @@ type Agent struct {
 type ChangeEvent struct {
 	SessionID string    `json:"session_id"`
 	AgentID   string    `json:"agent_id"`
+	FilePath  string    `json:"file_path"`  // Path to the file being changed
 	Timestamp time.Time `json:"timestamp"`
 	Patch     string    `json:"patch"`
 	Version   int       `json:"version"`
@@ -142,14 +143,41 @@ func (ce *CollaborationEngine) ApplyChange(event *ChangeEvent) (*Session, error)
 		return nil, fmt.Errorf("invalid patch: %v", err)
 	}
 
-	// Apply patches to get new content
-	newContent, results := ce.dmp.PatchApply(patches, session.Content)
-	if !results[0] {
-		return nil, fmt.Errorf("failed to apply patch")
+	// If FilePath is specified, apply to that specific file
+	if event.FilePath != "" {
+		file, exists := session.Files[event.FilePath]
+		if !exists {
+			// File doesn't exist yet, create it
+			file = &FileInfo{
+				Path:         event.FilePath,
+				Content:      "",
+				LastModified: time.Now(),
+				Version:      0,
+			}
+			session.Files[event.FilePath] = file
+		}
+
+		// Apply patches to file content
+		newContent, results := ce.dmp.PatchApply(patches, file.Content)
+		if !results[0] {
+			return nil, fmt.Errorf("failed to apply patch to file %s", event.FilePath)
+		}
+
+		// Update file
+		file.Content = newContent
+		file.Size = int64(len(newContent))
+		file.LastModified = time.Now()
+		file.Version++
+	} else {
+		// Backward compatibility: apply to session.Content
+		newContent, results := ce.dmp.PatchApply(patches, session.Content)
+		if !results[0] {
+			return nil, fmt.Errorf("failed to apply patch")
+		}
+		session.Content = newContent
 	}
 
-	// Update session content and version
-	session.Content = newContent
+	// Update session version
 	session.Version++
 	agent.Version = session.Version
 

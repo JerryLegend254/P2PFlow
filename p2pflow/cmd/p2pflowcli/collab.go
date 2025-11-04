@@ -10,10 +10,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/collab"
 	"github.com/JerryLegend254/p2pflow/internal/network"
 	"github.com/JerryLegend254/p2pflow/internal/watcher"
+	"github.com/briandowns/spinner"
+	"github.com/fatih/color"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/cobra"
 )
@@ -93,11 +96,17 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 
 			if info.IsDir() {
 				// Directory mode - scan all files
-				app.console.Infof("Scanning directory...")
+				cyan := color.New(color.FgCyan).SprintFunc()
+				green := color.New(color.FgGreen).SprintFunc()
+
+				s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+				s.Suffix = " Scanning directory..."
+				s.Start()
 
 				// Create session with empty content for backward compatibility
 				session, err = node.CreateSession(sessionID, "", "")
 				if err != nil {
+					s.Stop()
 					return fmt.Errorf("failed to create session: %w", err)
 				}
 
@@ -106,6 +115,7 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 
 				// Scan and add all files
 				fileCount := 0
+				var totalSize int64
 				err = filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
 					if err != nil {
 						return err
@@ -119,25 +129,27 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 					// Read file content
 					content, err := os.ReadFile(path)
 					if err != nil {
-						app.console.Warnf("Failed to read %s: %v", path, err)
 						return nil
 					}
 
 					// Add file to session
 					if err := node.GetCollabEngine().AddFile(sessionID, path, string(content)); err != nil {
-						app.console.Warnf("Failed to add %s to session: %v", path, err)
 						return nil
 					}
 
 					fileCount++
+					totalSize += int64(len(content))
+					s.Suffix = fmt.Sprintf(" Scanning directory... (%d files, %s)", fileCount, formatBytes(totalSize))
 					return nil
 				})
+
+				s.Stop()
 
 				if err != nil {
 					return fmt.Errorf("failed to scan directory: %w", err)
 				}
 
-				app.console.Infof("Added %d files to session", fileCount)
+				fmt.Printf("✓ Added %s to session (%s)\n", green(fmt.Sprintf("%d files", fileCount)), cyan(formatBytes(totalSize)))
 
 			} else {
 				// Single file mode (backward compatibility)
@@ -264,11 +276,18 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 
 			// Connect to bootstrap peer if provided
 			if bootstrapPeer != "" {
-				app.console.Infof("Connecting to bootstrap peer: %s", bootstrapPeer)
+				green := color.New(color.FgGreen).SprintFunc()
+
+				s := spinner.New(spinner.CharSets[11], 100*time.Millisecond)
+				s.Suffix = " Connecting to peer..."
+				s.Start()
+
 				if err := node.ConnectToPeer(bootstrapPeer); err != nil {
+					s.Stop()
 					app.console.Warnf("Failed to connect to bootstrap peer: %v", err)
 				} else {
-					app.console.Infof("Successfully connected to bootstrap peer")
+					s.Stop()
+					fmt.Printf("✓ %s to peer\n", green("Connected"))
 				}
 			}
 
@@ -360,7 +379,7 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 	w.CollabEngine = node.GetCollabEngine()
 
 	// Set up change handler
-	w.OnChange = func(patch string) {
+	w.OnChange = func(patch string, changedFilePath string) {
 		// Get the session to apply changes
 		session, err := w.CollabEngine.GetSession(sessionID)
 		if err != nil {
@@ -368,10 +387,11 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 			return
 		}
 
-		// Create change event
+		// Create change event with file path
 		changeEvent := &collab.ChangeEvent{
 			SessionID: sessionID,
 			AgentID:   agentName,
+			FilePath:  changedFilePath,  // Include file path
 			Patch:     patch,
 			Version:   session.Version,
 		}
@@ -396,4 +416,18 @@ func generateSessionID() string {
 	bytes := make([]byte, 8)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// formatBytes converts bytes to human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

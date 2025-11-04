@@ -24,12 +24,13 @@ type Watcher struct {
 	watcher  *fsnotify.Watcher
 	last     string
 	Dmp      *dmp.DiffMatchPatch
-	OnChange func(patch string)
+	OnChange func(patch string, filePath string)  // Updated to include filePath
 
 	CollabEngine   *collab.CollaborationEngine
 	SessionManager *collab.SessionManager
 	SessionID      string
 	AgentID        string
+	fileContents   map[string]string  // Track content per file for multi-file watching
 }
 
 func NewWatcher(path string) (*Watcher, error) {
@@ -50,6 +51,7 @@ func NewWatcher(path string) (*Watcher, error) {
 		SessionManager: sessionManager,
 		SessionID:      generateSessionID(),
 		AgentID:        generateAgentID(),
+		fileContents:   make(map[string]string),
 	}
 
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
@@ -168,21 +170,30 @@ func (w *Watcher) handleFileWrite(filePath string) {
 
 	cur := string(b)
 
+	// Get previous content for this file
+	prev, exists := w.fileContents[filePath]
+	if !exists {
+		prev = w.last  // Fallback to single-file mode
+	}
+
 	// Skip if content hasn't changed
-	if cur == w.last {
+	if cur == prev {
 		return
 	}
 
-	diffs := w.Dmp.DiffMain(w.last, cur, false)
+	// Generate diff
+	diffs := w.Dmp.DiffMain(prev, cur, false)
 	patch := w.Dmp.PatchToText(w.Dmp.PatchMake(diffs))
 
-	w.last = cur
+	// Update stored content
+	w.fileContents[filePath] = cur
+	w.last = cur  // For backward compatibility
 
 	if w.OnChange != nil {
-		w.OnChange(patch)
+		w.OnChange(patch, filePath)  // Pass file path
 	}
 
-	fmt.Printf("Generated patch: %s\n", patch)
+	fmt.Printf("Generated patch for %s: %s\n", filePath, patch)
 }
 
 // handleFileCreate handles creation of new files or directories
@@ -215,10 +226,13 @@ func (w *Watcher) handleFileCreate(filePath string) {
 		diffs := w.Dmp.DiffMain("", content, false)
 		patch := w.Dmp.PatchToText(w.Dmp.PatchMake(diffs))
 
+		// Store initial content
+		w.fileContents[filePath] = content
+
 		if w.OnChange != nil {
-			w.OnChange(patch)
+			w.OnChange(patch, filePath)  // Pass file path
 		}
 
-		fmt.Printf("Generated patch for new file: %s\n", patch)
+		fmt.Printf("Generated patch for new file %s: %s\n", filePath, patch)
 	}
 }

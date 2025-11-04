@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/multiformats/go-multiaddr"
+	"github.com/schollz/progressbar/v3"
 )
 
 const (
@@ -451,37 +453,78 @@ sessionSynced:
 filesReceived:
 	// Download each file
 	if fileManifest != nil && len(fileManifest.Files) > 0 {
-		log.Printf("Downloading %d files...", len(fileManifest.Files))
+		totalFiles := len(fileManifest.Files)
+		fmt.Printf("\n📥 Downloading %d files...\n\n", totalFiles)
+
+		// Create progress bar
+		bar := progressbar.NewOptions(totalFiles,
+			progressbar.OptionEnableColorCodes(true),
+			progressbar.OptionShowBytes(false),
+			progressbar.OptionSetWidth(40),
+			progressbar.OptionSetDescription("[cyan]Syncing files...[reset]"),
+			progressbar.OptionSetTheme(progressbar.Theme{
+				Saucer:        "[green]=[reset]",
+				SaucerHead:    "[green]>[reset]",
+				SaucerPadding: " ",
+				BarStart:      "[",
+				BarEnd:        "]",
+			}),
+			progressbar.OptionShowCount(),
+			progressbar.OptionOnCompletion(func() {
+				fmt.Println("\n")
+			}),
+		)
+
+		successCount := 0
+		failedFiles := []string{}
+		var totalBytes int64
 
 		for filePath := range fileManifest.Files {
-			log.Printf("Requesting file: %s", filePath)
-
 			if err := n.requestFile(sessionID, filePath); err != nil {
 				log.Printf("Failed to request file %s: %v", filePath, err)
+				failedFiles = append(failedFiles, filePath)
+				bar.Add(1)
 				continue
 			}
 
 			// Wait for file transfer
 			select {
 			case transfer := <-n.fileTransferChan:
-				log.Printf("Received file: %s (%d bytes)", transfer.FilePath, transfer.Size)
-
 				// Add file to the session
 				if err := n.collabEngine.AddFile(sessionID, transfer.FilePath, transfer.Content); err != nil {
 					log.Printf("Failed to add file %s to session: %v", transfer.FilePath, err)
+					failedFiles = append(failedFiles, filePath)
+					bar.Add(1)
 					continue
+				}
+
+				// Ensure directory exists
+				dir := filepath.Dir(transfer.FilePath)
+				if dir != "." && dir != "" {
+					if err := os.MkdirAll(dir, 0755); err != nil {
+						log.Printf("Failed to create directory %s: %v", dir, err)
+						failedFiles = append(failedFiles, filePath)
+						bar.Add(1)
+						continue
+					}
 				}
 
 				// Save file to local filesystem
 				if err := os.WriteFile(transfer.FilePath, []byte(transfer.Content), 0644); err != nil {
 					log.Printf("Failed to write file %s: %v", transfer.FilePath, err)
+					failedFiles = append(failedFiles, filePath)
+					bar.Add(1)
 					continue
 				}
 
-				log.Printf("Successfully synced file: %s", transfer.FilePath)
+				successCount++
+				totalBytes += transfer.Size
+				bar.Add(1)
 
 			case <-time.After(SyncTimeout):
 				log.Printf("Timeout waiting for file %s, skipping", filePath)
+				failedFiles = append(failedFiles, filePath)
+				bar.Add(1)
 				continue
 
 			case <-n.ctx.Done():
@@ -489,7 +532,23 @@ filesReceived:
 			}
 		}
 
-		log.Printf("File synchronization complete")
+		// Print summary
+		fmt.Printf("\n✅ File synchronization complete!\n")
+		fmt.Printf("   📊 Summary:\n")
+		fmt.Printf("      • Total files: %d\n", totalFiles)
+		fmt.Printf("      • Successfully synced: [green]%d[reset]\n", successCount)
+		if len(failedFiles) > 0 {
+			fmt.Printf("      • Failed: [red]%d[reset]\n", len(failedFiles))
+		}
+		fmt.Printf("      • Total size: %s\n", formatBytes(totalBytes))
+
+		if len(failedFiles) > 0 {
+			fmt.Printf("\n   ⚠️  Failed files:\n")
+			for _, f := range failedFiles {
+				fmt.Printf("      - %s\n", f)
+			}
+		}
+		fmt.Println()
 	}
 
 skipFileSync:
@@ -735,13 +794,50 @@ func (n *P2PNode) handleChange(msg *Message) error {
 		return fmt.Errorf("failed to unmarshal change event: %w", err)
 	}
 
+	log.Printf("Received change for file: %s from peer %s", event.FilePath, msg.AgentID)
+
 	// Apply change to collaboration engine
-	_, err := n.collabEngine.ApplyChange(&event)
+	session, err := n.collabEngine.ApplyChange(&event)
 	if err != nil {
 		return fmt.Errorf("failed to apply change: %w", err)
 	}
 
-	log.Printf("Applied change from peer %s", msg.AgentID)
+	log.Printf("Applied change from peer %s to session", msg.AgentID)
+
+	// Write the updated content to the filesystem
+	if event.FilePath != "" {
+		file, err := n.collabEngine.GetFile(event.SessionID, event.FilePath)
+		if err != nil {
+			log.Printf("Warning: Could not get file %s: %v", event.FilePath, err)
+			return nil
+		}
+
+		log.Printf("Writing updated content to file: %s (%d bytes)", event.FilePath, len(file.Content))
+
+		// Ensure directory exists
+		dir := filepath.Dir(event.FilePath)
+		if dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				log.Printf("Warning: Failed to create directory %s: %v", dir, err)
+			}
+		}
+
+		// Write file
+		if err := os.WriteFile(event.FilePath, []byte(file.Content), 0644); err != nil {
+			log.Printf("Warning: Failed to write file %s: %v", event.FilePath, err)
+			return nil
+		}
+
+		log.Printf("Successfully wrote file: %s", event.FilePath)
+	} else {
+		// Backward compatibility: write session.Content to session.FilePath
+		if session.FilePath != "" && session.Content != "" {
+			if err := os.WriteFile(session.FilePath, []byte(session.Content), 0644); err != nil {
+				log.Printf("Warning: Failed to write file %s: %v", session.FilePath, err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -934,6 +1030,20 @@ func generateNodeID() string {
 	bytes := make([]byte, 8)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// formatBytes converts bytes to human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 // ValidateMessage validates a pubsub message before it's processed
