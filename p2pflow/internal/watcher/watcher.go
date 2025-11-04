@@ -56,10 +56,6 @@ func NewWatcher(path string) (*Watcher, error) {
 		d.last = string(b)
 		fmt.Printf("Initial content loaded: %d bytes\n", len(d.last))
 
-		// Create collaboration session
-		session := d.CollabEngine.CreateSession(d.SessionID, path, d.last)
-		d.SessionManager.SaveSession(session)
-		fmt.Printf("Created collaboration session: %s\n", d.SessionID)
 	}
 	return d, nil
 }
@@ -104,26 +100,6 @@ func (w *Watcher) Start(errCh chan<- error) error {
 					patch := w.Dmp.PatchToText(w.Dmp.PatchMake(diffs))
 
 					w.last = cur
-
-					changeEvent := &collab.ChangeEvent{
-						SessionID: w.SessionID,
-						AgentID:   w.AgentID,
-						Timestamp: time.Now(),
-						Patch:     patch,
-						Version:   0, // Will be set by the collaboration engine
-					}
-
-					// Apply change to collaboration engine
-					session, err := w.CollabEngine.ApplyChange(changeEvent)
-					if err != nil {
-						fmt.Printf("Error applying change: %v\n", err)
-					} else {
-						// Save change event to disk
-						w.SessionManager.SaveChangeEvent(changeEvent)
-						// Update session
-						w.SessionManager.SaveSession(session)
-						fmt.Printf("Applied change to session %s, version %d\n", session.ID, session.Version)
-					}
 
 					if w.OnChange != nil {
 						w.OnChange(patch)

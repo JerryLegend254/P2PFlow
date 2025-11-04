@@ -174,6 +174,14 @@ func (ce *CollaborationEngine) GetSession(sessionID string) (*Session, error) {
 	return session, nil
 }
 
+// ImportSession imports a session from external source (e.g., from peer sync)
+func (ce *CollaborationEngine) ImportSession(session *Session) {
+	ce.mu.Lock()
+	defer ce.mu.Unlock()
+
+	ce.sessions[session.ID] = session
+}
+
 // ListSessions returns all active sessions
 func (ce *CollaborationEngine) ListSessions() []*Session {
 	ce.mu.RLock()

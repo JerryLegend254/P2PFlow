@@ -107,8 +107,8 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				app.console.Infof("Peer connected: %s", peerID)
 			})
 
-			// Set up file watcher
-			fileWatcher, err := createFileWatcher(node, filePath, sessionID, agentName)
+			// Set up file watcher (use node ID as agent ID to match the session)
+			fileWatcher, err := createFileWatcher(node, filePath, sessionID, node.GetNodeID())
 			if err != nil {
 				app.console.Errorf("Failed to create file watcher: %v", err)
 			} else {
@@ -222,9 +222,9 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 				}
 			})
 
-			// Set up file watcher if file path is provided
+			// Set up file watcher if file path is provided (use node ID as agent ID to match the session)
 			if filePath != "" {
-				fileWatcher, err := createFileWatcher(node, filePath, sessionID, agentName)
+				fileWatcher, err := createFileWatcher(node, filePath, sessionID, node.GetNodeID())
 				if err != nil {
 					app.console.Errorf("Failed to create file watcher: %v", err)
 				} else {
@@ -269,9 +269,10 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 
-	// Override the session ID
+	// Override the session ID and replace the collaboration engine with the node's engine
 	w.SessionID = sessionID
 	w.AgentID = agentName
+	w.CollabEngine = node.GetCollabEngine()
 
 	// Set up change handler
 	w.OnChange = func(patch string) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/collab"
 	"github.com/libp2p/go-libp2p"
@@ -25,6 +26,8 @@ const (
 	ProtocolID = "/p2pflow/collab/1.0.0"
 	// DiscoveryInterval is how often we search for peers
 	DiscoveryInterval = 10
+	// SyncTimeout is how long to wait for a sync response
+	SyncTimeout = 10 * time.Second
 )
 
 // P2PNode represents a P2P networking node
@@ -41,12 +44,13 @@ type P2PNode struct {
 	sessionManager *collab.SessionManager
 
 	// Node state
-	nodeID     string
-	sessionID  string
-	peers      map[peer.ID]*PeerInfo
-	peersMutex sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
+	nodeID            string
+	sessionID         string
+	peers             map[peer.ID]*PeerInfo
+	peersMutex        sync.RWMutex
+	ctx               context.Context
+	cancel            context.CancelFunc
+	syncResponseChan  chan *SyncResponse
 
 	// Callbacks
 	onPeerConnected    func(peer.ID)
@@ -69,6 +73,18 @@ type Message struct {
 	AgentID   string          `json:"agent_id"`
 	Payload   json.RawMessage `json:"payload"`
 	Timestamp int64           `json:"timestamp"`
+}
+
+// SyncRequest represents a request for session synchronization
+type SyncRequest struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+}
+
+// SyncResponse represents a response containing session state
+type SyncResponse struct {
+	Session *collab.Session `json:"session"`
 }
 
 // MessageType represents the type of message
@@ -192,6 +208,12 @@ func (n *P2PNode) CreateSession(sessionID, filePath, content string) (*collab.Se
 	// Create session in collaboration engine
 	session := n.collabEngine.CreateSession(sessionID, filePath, content)
 
+	// Add ourselves as an agent in the session
+	_, err := n.collabEngine.JoinSession(sessionID, n.nodeID, n.nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join session as creator: %w", err)
+	}
+
 	// Save session
 	if err := n.sessionManager.SaveSession(session); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
@@ -241,17 +263,51 @@ func (n *P2PNode) JoinSession(sessionID, agentName string, content string) error
 
 	n.sub = sub
 
+	// Create a channel to receive sync response
+	n.syncResponseChan = make(chan *SyncResponse, 1)
+
 	// Start message handler
 	go n.handleMessages()
 
-	// Try to load existing session
+	// Try to load existing session locally first
 	session, err := n.sessionManager.LoadSession(sessionID)
 	if err != nil {
-		// Session doesn't exist locally, create a new one
-		session = n.collabEngine.CreateSession(sessionID, "", content)
-		n.sessionManager.SaveSession(session)
+		// Session doesn't exist locally, request it from peers
+		log.Printf("Session not found locally, requesting sync from peers...")
+
+		if err := n.requestSessionSync(sessionID, agentName); err != nil {
+			return fmt.Errorf("failed to request session sync: %w", err)
+		}
+
+		// Wait for sync response with timeout
+		select {
+		case syncResp := <-n.syncResponseChan:
+			if syncResp == nil || syncResp.Session == nil {
+				return fmt.Errorf("received invalid sync response")
+			}
+
+			log.Printf("Received session state from peer")
+
+			// Create session from the received state
+			session = syncResp.Session
+			n.collabEngine.ImportSession(session)
+
+			// Save session locally
+			if err := n.sessionManager.SaveSession(session); err != nil {
+				log.Printf("Warning: failed to save session locally: %v", err)
+			}
+
+		case <-time.After(SyncTimeout):
+			return fmt.Errorf("timeout waiting for session sync response - no peers available or session not found")
+
+		case <-n.ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for sync")
+		}
+	} else {
+		log.Printf("Loaded existing session from local storage: %s", session.ID)
+		// Import the loaded session into the collaboration engine
+		n.collabEngine.ImportSession(session)
 	}
-	fmt.Printf("session id: %s", session.ID)
 
 	// Add ourselves to the session
 	_, err = n.collabEngine.JoinSession(sessionID, n.nodeID, agentName)
@@ -307,6 +363,16 @@ func (n *P2PNode) SetOnMessage(callback func(*Message)) {
 // GetHost returns the libp2p host
 func (n *P2PNode) GetHost() host.Host {
 	return n.host
+}
+
+// GetNodeID returns the node ID
+func (n *P2PNode) GetNodeID() string {
+	return n.nodeID
+}
+
+// GetCollabEngine returns the collaboration engine
+func (n *P2PNode) GetCollabEngine() *collab.CollaborationEngine {
+	return n.collabEngine
 }
 
 // GetPeers returns the list of connected peers
@@ -420,15 +486,69 @@ func (n *P2PNode) handleChange(msg *Message) error {
 	return nil
 }
 
-func (n *P2PNode) handleSync(_ *Message) error {
-	// Send current session state
-	// TODO: Implement sync response
+func (n *P2PNode) handleSync(msg *Message) error {
+	// Deserialize sync request
+	var req SyncRequest
+	if err := json.Unmarshal(msg.Payload, &req); err != nil {
+		return fmt.Errorf("failed to unmarshal sync request: %w", err)
+	}
+
+	log.Printf("Received sync request for session %s from agent %s", req.SessionID, req.AgentID)
+
+	// Get the session from collaboration engine
+	session, err := n.collabEngine.GetSession(req.SessionID)
+	if err != nil {
+		log.Printf("Session %s not found, cannot respond to sync request", req.SessionID)
+		return nil // Don't propagate error, just don't respond
+	}
+
+	// Create sync response
+	syncResp := &SyncResponse{
+		Session: session,
+	}
+
+	// Serialize the response
+	payload, err := json.Marshal(syncResp)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sync response: %w", err)
+	}
+
+	// Create response message
+	responseMsg := &Message{
+		Type:      MessageTypeSyncResponse,
+		SessionID: req.SessionID,
+		AgentID:   n.nodeID,
+		Payload:   payload,
+	}
+
+	// Send the response
+	if err := n.sendMessage(responseMsg); err != nil {
+		return fmt.Errorf("failed to send sync response: %w", err)
+	}
+
+	log.Printf("Sent session state to peer %s", req.AgentID)
 	return nil
 }
 
-func (n *P2PNode) handleSyncResponse(_ *Message) error {
-	// Handle sync response
-	// TODO: Implement sync response handling
+func (n *P2PNode) handleSyncResponse(msg *Message) error {
+	// Deserialize sync response
+	var resp SyncResponse
+	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+		return fmt.Errorf("failed to unmarshal sync response: %w", err)
+	}
+
+	log.Printf("Received sync response from peer %s", msg.AgentID)
+
+	// Send the response through the channel if it's being waited on
+	if n.syncResponseChan != nil {
+		select {
+		case n.syncResponseChan <- &resp:
+			log.Printf("Delivered sync response to waiting goroutine")
+		default:
+			log.Printf("No goroutine waiting for sync response")
+		}
+	}
+
 	return nil
 }
 
@@ -440,6 +560,37 @@ func (n *P2PNode) broadcastJoin() error {
 	}
 
 	return n.sendMessage(msg)
+}
+
+func (n *P2PNode) requestSessionSync(sessionID, agentName string) error {
+	// Create sync request
+	req := &SyncRequest{
+		SessionID: sessionID,
+		AgentID:   n.nodeID,
+		AgentName: agentName,
+	}
+
+	// Serialize the request
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sync request: %w", err)
+	}
+
+	// Create message
+	msg := &Message{
+		Type:      MessageTypeSync,
+		SessionID: sessionID,
+		AgentID:   n.nodeID,
+		Payload:   payload,
+	}
+
+	// Broadcast the sync request
+	if err := n.sendMessage(msg); err != nil {
+		return fmt.Errorf("failed to send sync request: %w", err)
+	}
+
+	log.Printf("Sent sync request for session %s", sessionID)
+	return nil
 }
 
 func (n *P2PNode) sendMessage(msg *Message) error {
