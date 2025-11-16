@@ -3,6 +3,7 @@ package collab
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -41,12 +42,13 @@ type Agent struct {
 
 // ChangeEvent represents a change made by an agent
 type ChangeEvent struct {
-	SessionID string    `json:"session_id"`
-	AgentID   string    `json:"agent_id"`
-	FilePath  string    `json:"file_path"`  // Path to the file being changed
-	Timestamp time.Time `json:"timestamp"`
-	Patch     string    `json:"patch"`
-	Version   int       `json:"version"`
+	SessionID   string    `json:"session_id"`
+	AgentID     string    `json:"agent_id"`
+	FilePath    string    `json:"file_path"`   // Path to the file being changed
+	Timestamp   time.Time `json:"timestamp"`
+	Patch       string    `json:"patch"`
+	Version     int       `json:"version"`     // Target version after applying
+	BaseVersion int       `json:"base_version"` // Version the patch was created from
 }
 
 // CollaborationEngine manages shared state and patch merging
@@ -157,10 +159,21 @@ func (ce *CollaborationEngine) ApplyChange(event *ChangeEvent) (*Session, error)
 			session.Files[event.FilePath] = file
 		}
 
+		// Check if patch is based on current version
+		if event.BaseVersion > 0 && event.BaseVersion != file.Version {
+			log.Printf("Warning: Patch for %s is based on version %d, but current version is %d. Attempting to apply anyway (may cause conflicts).",
+				event.FilePath, event.BaseVersion, file.Version)
+
+			// TODO: Implement proper conflict resolution
+			// For now, we still try to apply the patch
+			// The diff-match-patch library is fuzzy and may succeed
+		}
+
 		// Apply patches to file content
 		newContent, results := ce.dmp.PatchApply(patches, file.Content)
 		if !results[0] {
-			return nil, fmt.Errorf("failed to apply patch to file %s", event.FilePath)
+			return nil, fmt.Errorf("failed to apply patch to file %s (version mismatch: base=%d, current=%d)",
+				event.FilePath, event.BaseVersion, file.Version)
 		}
 
 		// Update file

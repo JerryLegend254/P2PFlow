@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/JerryLegend254/p2pflow/internal/analytics"
 	"github.com/JerryLegend254/p2pflow/internal/collab"
+	"github.com/JerryLegend254/p2pflow/internal/ignore"
 	"github.com/fsnotify/fsnotify"
 	dmp "github.com/sergi/go-diff/diffmatchpatch"
 )
@@ -31,6 +33,15 @@ type Watcher struct {
 	SessionID      string
 	AgentID        string
 	fileContents   map[string]string  // Track content per file for multi-file watching
+
+	// Callback to check if a file write is from an incoming change
+	IsIncomingWrite func(filePath string) bool
+
+	// Ignore matcher for filtering files (exported for sharing with P2P node)
+	IgnoreMatcher *ignore.IgnoreMatcher
+
+	// Analytics engine for tracking file access patterns
+	AnalyticsEngine *analytics.AnalyticsEngine
 }
 
 func NewWatcher(path string) (*Watcher, error) {
@@ -43,6 +54,18 @@ func NewWatcher(path string) (*Watcher, error) {
 	collabEngine := collab.NewCollaborationEngine()
 	sessionManager := collab.NewSessionManager(".")
 
+	// Initialize ignore matcher
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	rootPath := absPath
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		rootPath = filepath.Dir(absPath)
+	}
+
+	ignoreMatcher := ignore.NewIgnoreMatcher(rootPath)
+
 	d := &Watcher{
 		path:           path,
 		watcher:        w,
@@ -52,6 +75,7 @@ func NewWatcher(path string) (*Watcher, error) {
 		SessionID:      generateSessionID(),
 		AgentID:        generateAgentID(),
 		fileContents:   make(map[string]string),
+		IgnoreMatcher:  ignoreMatcher,
 	}
 
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
@@ -61,6 +85,39 @@ func NewWatcher(path string) (*Watcher, error) {
 
 	}
 	return d, nil
+}
+
+// LoadIgnorePatterns loads ignore patterns from configuration and .p2pignore file
+func (w *Watcher) LoadIgnorePatterns(useDefaults bool, useP2PIgnore bool, customPatterns []string) {
+	if w.IgnoreMatcher == nil {
+		return
+	}
+
+	// Add default patterns if enabled
+	if useDefaults {
+		w.IgnoreMatcher.AddDefaultPatterns()
+		fmt.Printf("Loaded default ignore patterns\n")
+	}
+
+	// Add custom patterns from config
+	for _, pattern := range customPatterns {
+		w.IgnoreMatcher.AddPattern(pattern)
+	}
+	if len(customPatterns) > 0 {
+		fmt.Printf("Loaded %d custom ignore patterns from config\n", len(customPatterns))
+	}
+
+	// Load .p2pignore file if enabled
+	if useP2PIgnore {
+		rootPath := w.path
+		if info, err := os.Stat(w.path); err == nil && !info.IsDir() {
+			rootPath = filepath.Dir(w.path)
+		}
+		ignoreFile := filepath.Join(rootPath, ".p2pignore")
+		if err := w.IgnoreMatcher.LoadFromFile(ignoreFile); err == nil {
+			fmt.Printf("Loaded ignore patterns from %s\n", ignoreFile)
+		}
+	}
 }
 
 func (w *Watcher) Start(errCh chan<- error) error {
@@ -137,9 +194,14 @@ func (w *Watcher) addDirRecursive(dir string) error {
 			return err
 		}
 
-		// Skip hidden files and directories
-		if info.IsDir() && info.Name()[0] == '.' {
-			return filepath.SkipDir
+		// Check if path should be ignored
+		if w.IgnoreMatcher != nil && w.IgnoreMatcher.ShouldIgnore(path, info.IsDir()) {
+			if info.IsDir() {
+				fmt.Printf("  Skipping ignored directory: %s\n", path)
+				return filepath.SkipDir
+			}
+			fmt.Printf("  Skipping ignored file: %s\n", path)
+			return nil
 		}
 
 		// Add directories to watcher
@@ -157,6 +219,34 @@ func (w *Watcher) addDirRecursive(dir string) error {
 // handleFileWrite handles write events to files
 func (w *Watcher) handleFileWrite(filePath string) {
 	fmt.Printf("Write detected: %s\n", filePath)
+
+	// Check if file should be ignored
+	if w.IgnoreMatcher != nil {
+		info, err := os.Stat(filePath)
+		isDir := err == nil && info.IsDir()
+		if w.IgnoreMatcher.ShouldIgnore(filePath, isDir) {
+			fmt.Printf("Ignoring write to filtered file: %s\n", filePath)
+			return
+		}
+	}
+
+	// Check if this is an incoming write from a peer (to prevent loops)
+	if w.IsIncomingWrite != nil && w.IsIncomingWrite(filePath) {
+		fmt.Printf("Skipping write event for %s (incoming change from peer)\n", filePath)
+
+		// Still update our local content cache to stay in sync
+		b, _ := os.ReadFile(filePath)
+		if b != nil {
+			w.fileContents[filePath] = string(b)
+			w.last = string(b)
+		}
+		return
+	}
+
+	// Record analytics: local file write
+	if w.AnalyticsEngine != nil {
+		w.AnalyticsEngine.RecordFileAccess(filePath, analytics.AccessTypeWrite)
+	}
 
 	// Small debounce to avoid excessive patch generation
 	time.Sleep(50 * time.Millisecond)
@@ -205,6 +295,17 @@ func (w *Watcher) handleFileCreate(filePath string) {
 	if err != nil {
 		fmt.Printf("Error stating file: %v\n", err)
 		return
+	}
+
+	// Check if file/directory should be ignored
+	if w.IgnoreMatcher != nil && w.IgnoreMatcher.ShouldIgnore(filePath, info.IsDir()) {
+		fmt.Printf("Ignoring creation of filtered file/directory: %s\n", filePath)
+		return
+	}
+
+	// Record analytics: file creation
+	if w.AnalyticsEngine != nil && !info.IsDir() {
+		w.AnalyticsEngine.RecordFileAccess(filePath, analytics.AccessTypeCreate)
 	}
 
 	if info.IsDir() {

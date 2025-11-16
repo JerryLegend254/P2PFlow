@@ -16,6 +16,11 @@ type appConfig struct {
 		Name      string `mapstructure:"name"`
 		Provider  string `mapstructure:"provider"`
 	} `mapstructure:"auth"`
+	Ignore struct {
+		Patterns       []string `mapstructure:"patterns"`
+		UseDefaults    bool     `mapstructure:"use_defaults"`
+		UseP2PIgnore   bool     `mapstructure:"use_p2pignore"`
+	} `mapstructure:"ignore"`
 }
 
 func (app *application) initConfig(cfgFile string) error {
@@ -37,6 +42,11 @@ func (app *application) initConfig(cfgFile string) error {
 	}
 
 	viper.AutomaticEnv()
+
+	// Set default values for ignore configuration
+	viper.SetDefault("ignore.use_defaults", true)
+	viper.SetDefault("ignore.use_p2pignore", true)
+	viper.SetDefault("ignore.patterns", []string{})
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

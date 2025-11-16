@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JerryLegend254/p2pflow/internal/analytics"
 	"github.com/JerryLegend254/p2pflow/internal/collab"
+	"github.com/JerryLegend254/p2pflow/internal/ignore"
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pubsub_pb "github.com/libp2p/go-libp2p-pubsub/pb"
@@ -57,10 +59,20 @@ type P2PNode struct {
 	fileManifestResponseChan chan *FileManifestResponse
 	fileTransferChan         chan *FileTransfer
 
+	// File write tracking to prevent infinite loops
+	incomingWrites      map[string]bool
+	incomingWritesMutex sync.RWMutex
+
 	// Callbacks
 	onPeerConnected    func(peer.ID)
 	onPeerDisconnected func(peer.ID)
 	onMessage          func(*Message)
+
+	// File filtering
+	ignoreMatcher *ignore.IgnoreMatcher
+
+	// Analytics engine
+	analyticsEngine *analytics.AnalyticsEngine
 }
 
 // PeerInfo contains information about a connected peer
@@ -174,14 +186,31 @@ func NewP2PNode(ctx context.Context, listenPort int, agentID string) (*P2PNode, 
 	collabEngine := collab.NewCollaborationEngine()
 	sessionManager := collab.NewSessionManager(".")
 
+	// Initialize analytics engine
+	analyticsConfig := analytics.DefaultConfig()
+	analyticsEngine, err := analytics.NewAnalyticsEngine(analyticsConfig)
+	if err != nil {
+		cancel()
+		h.Close()
+		return nil, fmt.Errorf("failed to create analytics engine: %w", err)
+	}
+
+	// Try to load existing analytics data
+	if err := analyticsEngine.Load(); err != nil {
+		log.Printf("Note: Could not load existing analytics data: %v", err)
+	}
+
 	node := &P2PNode{
-		host:           h,
-		collabEngine:   collabEngine,
-		sessionManager: sessionManager,
-		nodeID:         nodeID,
-		peers:          make(map[peer.ID]*PeerInfo),
-		ctx:            nodeCtx,
-		cancel:         cancel,
+		host:            h,
+		collabEngine:    collabEngine,
+		sessionManager:  sessionManager,
+		nodeID:          nodeID,
+		peers:           make(map[peer.ID]*PeerInfo),
+		ctx:             nodeCtx,
+		cancel:          cancel,
+		incomingWrites:  make(map[string]bool),
+		ignoreMatcher:   nil, // Will be set via SetIgnoreMatcher
+		analyticsEngine: analyticsEngine,
 	}
 
 	// Set up libp2p host handlers
@@ -222,6 +251,16 @@ func (n *P2PNode) Start() error {
 // Stop stops the P2P node
 func (n *P2PNode) Stop() error {
 	log.Println("Stopping P2P node...")
+
+	// Save analytics data before stopping
+	if n.analyticsEngine != nil {
+		if err := n.analyticsEngine.Save(); err != nil {
+			log.Printf("Warning: Failed to save analytics data: %v", err)
+		}
+		if err := n.analyticsEngine.Close(); err != nil {
+			log.Printf("Warning: Failed to close analytics engine: %v", err)
+		}
+	}
 
 	if n.cancel != nil {
 		n.cancel()
@@ -471,7 +510,7 @@ filesReceived:
 			}),
 			progressbar.OptionShowCount(),
 			progressbar.OptionOnCompletion(func() {
-				fmt.Println("\n")
+				fmt.Println("")
 			}),
 		)
 
@@ -784,6 +823,17 @@ func (n *P2PNode) handleMessage(msg *Message) error {
 
 func (n *P2PNode) handleJoin(msg *Message) error {
 	log.Printf("Peer %s joined session %s", msg.AgentID, msg.SessionID)
+
+	// Add the peer to our local session state
+	// This ensures we can accept changes from this peer
+	_, err := n.collabEngine.JoinSession(msg.SessionID, msg.AgentID, "Remote Peer")
+	if err != nil {
+		// If agent already exists, that's fine
+		log.Printf("Note: Could not add peer to session: %v", err)
+	} else {
+		log.Printf("Added peer %s to local session state", msg.AgentID)
+	}
+
 	return nil
 }
 
@@ -795,6 +845,14 @@ func (n *P2PNode) handleChange(msg *Message) error {
 	}
 
 	log.Printf("Received change for file: %s from peer %s", event.FilePath, msg.AgentID)
+
+	// Record analytics: file change from peer
+	if n.analyticsEngine != nil && event.FilePath != "" {
+		// Estimate size from patch length (rough approximation)
+		patchSize := int64(len(event.Patch))
+		n.analyticsEngine.RecordFileChange(event.FilePath, patchSize, msg.AgentID)
+		n.analyticsEngine.RecordFileAccess(event.FilePath, analytics.AccessTypeSync)
+	}
 
 	// Apply change to collaboration engine
 	session, err := n.collabEngine.ApplyChange(&event)
@@ -812,10 +870,19 @@ func (n *P2PNode) handleChange(msg *Message) error {
 			return nil
 		}
 
-		log.Printf("Writing updated content to file: %s (%d bytes)", event.FilePath, len(file.Content))
+		// Convert relative path to absolute path based on session root
+		targetPath := event.FilePath
+		if session.RootPath != "" && !filepath.IsAbs(event.FilePath) {
+			targetPath = filepath.Join(session.RootPath, event.FilePath)
+		}
+
+		log.Printf("Writing updated content to file: %s (%d bytes)", targetPath, len(file.Content))
+
+		// Mark this as an incoming write to prevent watcher loop
+		n.markIncomingWrite(targetPath)
 
 		// Ensure directory exists
-		dir := filepath.Dir(event.FilePath)
+		dir := filepath.Dir(targetPath)
 		if dir != "." && dir != "" {
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				log.Printf("Warning: Failed to create directory %s: %v", dir, err)
@@ -823,12 +890,12 @@ func (n *P2PNode) handleChange(msg *Message) error {
 		}
 
 		// Write file
-		if err := os.WriteFile(event.FilePath, []byte(file.Content), 0644); err != nil {
-			log.Printf("Warning: Failed to write file %s: %v", event.FilePath, err)
+		if err := os.WriteFile(targetPath, []byte(file.Content), 0644); err != nil {
+			log.Printf("Warning: Failed to write file %s: %v", targetPath, err)
 			return nil
 		}
 
-		log.Printf("Successfully wrote file: %s", event.FilePath)
+		log.Printf("Successfully wrote file: %s", targetPath)
 	} else {
 		// Backward compatibility: write session.Content to session.FilePath
 		if session.FilePath != "" && session.Content != "" {
@@ -1067,10 +1134,25 @@ func (n *P2PNode) handleFileManifestRequest(msg *Message) error {
 		return nil // Don't propagate error
 	}
 
+	// Filter out ignored files
+	filteredFiles := make(map[string]*collab.FileInfo)
+	for path, fileInfo := range files {
+		if n.ignoreMatcher != nil {
+			// Check if file should be ignored
+			info, err := os.Stat(path)
+			isDir := err == nil && info.IsDir()
+			if n.ignoreMatcher.ShouldIgnore(path, isDir) {
+				log.Printf("Filtering out ignored file from manifest: %s", path)
+				continue
+			}
+		}
+		filteredFiles[path] = fileInfo
+	}
+
 	// Create response
 	resp := &FileManifestResponse{
 		SessionID: req.SessionID,
-		Files:     files,
+		Files:     filteredFiles,
 	}
 
 	// Serialize the response
@@ -1092,7 +1174,7 @@ func (n *P2PNode) handleFileManifestRequest(msg *Message) error {
 		return fmt.Errorf("failed to send file manifest response: %w", err)
 	}
 
-	log.Printf("Sent file manifest to peer %s (%d files)", req.AgentID, len(files))
+	log.Printf("Sent file manifest to peer %s (%d files, %d filtered)", req.AgentID, len(filteredFiles), len(files)-len(filteredFiles))
 	return nil
 }
 
@@ -1242,3 +1324,87 @@ func (n *P2PNode) requestFile(sessionID, filePath string) error {
 	log.Printf("Sent file request for %s in session %s", filePath, sessionID)
 	return nil
 }
+
+// markIncomingWrite marks a file as being written from an incoming change
+// This prevents the watcher from detecting it and creating a loop
+func (n *P2PNode) markIncomingWrite(filePath string) {
+	n.incomingWritesMutex.Lock()
+	defer n.incomingWritesMutex.Unlock()
+	n.incomingWrites[filePath] = true
+
+	// Auto-clear after 1 second to prevent stale entries
+	go func() {
+		time.Sleep(1 * time.Second)
+		n.incomingWritesMutex.Lock()
+		delete(n.incomingWrites, filePath)
+		n.incomingWritesMutex.Unlock()
+	}()
+}
+
+// isIncomingWrite checks if a file is currently being written from an incoming change
+func (n *P2PNode) IsIncomingWrite(filePath string) bool {
+	n.incomingWritesMutex.RLock()
+	defer n.incomingWritesMutex.RUnlock()
+	return n.incomingWrites[filePath]
+}
+
+// GetSessionRootPath returns the root path of the current session
+func (n *P2PNode) GetSessionRootPath() (string, error) {
+	if n.sessionID == "" {
+		return "", fmt.Errorf("no active session")
+	}
+
+	session, err := n.collabEngine.GetSession(n.sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	return session.RootPath, nil
+}
+
+// SetIgnoreMatcher sets the ignore matcher for file filtering
+func (n *P2PNode) SetIgnoreMatcher(matcher *ignore.IgnoreMatcher) {
+	n.ignoreMatcher = matcher
+}
+
+// GetAnalyticsEngine returns the analytics engine
+func (n *P2PNode) GetAnalyticsEngine() *analytics.AnalyticsEngine {
+	return n.analyticsEngine
+}
+
+// GetPrefetchSuggestions returns intelligent prefetch suggestions
+func (n *P2PNode) GetPrefetchSuggestions(currentFiles []string, maxSuggestions int) []analytics.PrefetchSuggestion {
+	if n.analyticsEngine == nil {
+		return nil
+	}
+	return n.analyticsEngine.GetPrefetchSuggestions(currentFiles, maxSuggestions)
+}
+
+// GetFileImportance returns the importance score for a file
+func (n *P2PNode) GetFileImportance(filePath string) float64 {
+	if n.analyticsEngine == nil {
+		return 0.5
+	}
+	return n.analyticsEngine.GetFileImportance(filePath)
+}
+
+// DetectAnomalies checks for unusual sync patterns
+func (n *P2PNode) DetectAnomalies() []analytics.Anomaly {
+	if n.analyticsEngine == nil {
+		return nil
+	}
+	return n.analyticsEngine.DetectAnomalies()
+}
+
+// shouldIgnoreFile checks if a file should be ignored based on patterns
+//func (n *P2PNode) shouldIgnoreFile(filePath string) bool {
+//	if n.ignoreMatcher == nil {
+//		return false
+//	}
+//
+//	// Check if it's a directory
+//	info, err := os.Stat(filePath)
+//	isDir := err == nil && info.IsDir()
+//
+//	return n.ignoreMatcher.ShouldIgnore(filePath, isDir)
+//}

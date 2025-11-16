@@ -19,6 +19,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func (app *application) newCollabCommand() *cobra.Command {
@@ -132,8 +133,14 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 						return nil
 					}
 
-					// Add file to session
-					if err := node.GetCollabEngine().AddFile(sessionID, path, string(content)); err != nil {
+					// Convert to relative path from session root
+					relPath, err := filepath.Rel(filePath, path)
+					if err != nil {
+						relPath = path // Fallback to absolute if rel fails
+					}
+
+					// Add file to session with relative path
+					if err := node.GetCollabEngine().AddFile(sessionID, relPath, string(content)); err != nil {
 						return nil
 					}
 
@@ -325,9 +332,22 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 				}
 			})
 
-			// Set up file watcher if file path is provided (use node ID as agent ID to match the session)
-			if filePath != "" {
-				fileWatcher, err := createFileWatcher(node, filePath, sessionID, node.GetNodeID())
+			// Set up file watcher - watch the session directory for bidirectional sync
+			// If --file flag is provided, use that path; otherwise use current directory
+			watchPath := filePath
+			if watchPath == "" {
+				// Get session root path from node
+				rootPath, err := node.GetSessionRootPath()
+				if err == nil && rootPath != "" {
+					watchPath = rootPath
+				} else {
+					// Fall back to current working directory
+					watchPath, _ = os.Getwd()
+				}
+			}
+
+			if watchPath != "" {
+				fileWatcher, err := createFileWatcher(node, watchPath, sessionID, node.GetNodeID())
 				if err != nil {
 					app.console.Errorf("Failed to create file watcher: %v", err)
 				} else {
@@ -342,7 +362,7 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 						}
 					}()
 
-					app.console.Infof("File watcher started for: %s", filePath)
+					app.console.Infof("File watcher started for: %s", watchPath)
 				}
 			}
 
@@ -378,6 +398,19 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 	w.AgentID = agentName
 	w.CollabEngine = node.GetCollabEngine()
 
+	// Load ignore patterns from configuration
+	cfg := loadConfigForIgnore()
+	w.LoadIgnorePatterns(cfg.Ignore.UseDefaults, cfg.Ignore.UseP2PIgnore, cfg.Ignore.Patterns)
+
+	// Share the ignore matcher with the node
+	node.SetIgnoreMatcher(w.IgnoreMatcher)
+
+	// Share the analytics engine with the watcher
+	w.AnalyticsEngine = node.GetAnalyticsEngine()
+
+	// Set up incoming write check to prevent loops
+	w.IsIncomingWrite = node.IsIncomingWrite
+
 	// Set up change handler
 	w.OnChange = func(patch string, changedFilePath string) {
 		// Get the session to apply changes
@@ -387,13 +420,29 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 			return
 		}
 
-		// Create change event with file path
+		// Convert absolute path to relative path from session root
+		relPath := changedFilePath
+		if session.RootPath != "" && filepath.IsAbs(changedFilePath) {
+			rel, err := filepath.Rel(session.RootPath, changedFilePath)
+			if err == nil {
+				relPath = rel
+			}
+		}
+
+		// Get the current file version to use as base
+		baseVersion := 0
+		if file, err := w.CollabEngine.GetFile(sessionID, relPath); err == nil {
+			baseVersion = file.Version
+		}
+
+		// Create change event with relative file path and version info
 		changeEvent := &collab.ChangeEvent{
-			SessionID: sessionID,
-			AgentID:   agentName,
-			FilePath:  changedFilePath,  // Include file path
-			Patch:     patch,
-			Version:   session.Version,
+			SessionID:   sessionID,
+			AgentID:     agentName,
+			FilePath:    relPath,  // Use relative path
+			Patch:       patch,
+			Version:     session.Version,
+			BaseVersion: baseVersion,  // Version patch was created from
 		}
 
 		// Apply change locally
@@ -430,4 +479,24 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// loadConfigForIgnore loads configuration specifically for ignore patterns
+func loadConfigForIgnore() *appConfig {
+	cfg := &appConfig{}
+
+	// Set defaults
+	cfg.Ignore.UseDefaults = viper.GetBool("ignore.use_defaults")
+	cfg.Ignore.UseP2PIgnore = viper.GetBool("ignore.use_p2pignore")
+	cfg.Ignore.Patterns = viper.GetStringSlice("ignore.patterns")
+
+	// Apply defaults if not set
+	if !viper.IsSet("ignore.use_defaults") {
+		cfg.Ignore.UseDefaults = true
+	}
+	if !viper.IsSet("ignore.use_p2pignore") {
+		cfg.Ignore.UseP2PIgnore = true
+	}
+
+	return cfg
 }
