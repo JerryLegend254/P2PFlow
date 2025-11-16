@@ -56,6 +56,7 @@ func (app *application) mount() {
 
 	// collab commands
 	rootCmd.AddCommand(app.newCollabCommand())
+	rootCmd.AddCommand(app.newCollabCRDTCommand())
 
 	// analytics commands
 	rootCmd.AddCommand(app.newAnalyticsCommand())
