@@ -83,8 +83,8 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			// Create CRDT session
 			session := crdtEngine.CreateSession(sessionID, filePath, agentID)
 
-			// Create P2P node with CRDT support
-			node, err := network.NewCRDTNode(ctx, port, agentID)
+			// Create P2P node with CRDT support (pass the CRDT engine)
+			node, err := network.NewCRDTNode(ctx, port, agentID, crdtEngine)
 			if err != nil {
 				return fmt.Errorf("failed to create CRDT node: %w", err)
 			}
@@ -324,8 +324,8 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				crdtEngine.ImportSession(existingSession)
 			}
 
-			// Create P2P node
-			node, err := network.NewCRDTNode(ctx, port, agentID)
+			// Create P2P node (pass the CRDT engine)
+			node, err := network.NewCRDTNode(ctx, port, agentID, crdtEngine)
 			if err != nil {
 				return fmt.Errorf("failed to create CRDT node: %w", err)
 			}

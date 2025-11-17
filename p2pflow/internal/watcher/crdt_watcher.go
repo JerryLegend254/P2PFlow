@@ -222,17 +222,23 @@ func (w *CRDTWatcher) debounceHandleWrite(filePath string) {
 
 // handleWrite handles file write events and generates CRDT operations
 func (w *CRDTWatcher) handleWrite(filePath string) {
+	// Normalize path to absolute for consistent tracking
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		absPath = filePath
+	}
+
 	// Check if this is an incoming write (from remote peer)
 	w.incomingWritesMutex.RLock()
-	isIncoming := w.incomingWrites[filePath]
+	isIncoming := w.incomingWrites[absPath]
 	w.incomingWritesMutex.RUnlock()
 
 	if isIncoming {
 		// This is a write from ApplyRemoteOperation, skip to prevent loop
 		w.incomingWritesMutex.Lock()
-		delete(w.incomingWrites, filePath)
+		delete(w.incomingWrites, absPath)
 		w.incomingWritesMutex.Unlock()
-		fmt.Printf("Skipping incoming write for: %s\n", filePath)
+		fmt.Printf("✓ Skipping incoming write for: %s (tracked as %s)\n", filePath, absPath)
 
 		// Still need to update our file state
 		content, err := os.ReadFile(filePath)
@@ -244,6 +250,8 @@ func (w *CRDTWatcher) handleWrite(filePath string) {
 		}
 		return
 	}
+
+	fmt.Printf("→ Processing local write for: %s (tracked as %s)\n", filePath, absPath)
 
 	// Read new content
 	content, err := os.ReadFile(filePath)
@@ -271,8 +279,11 @@ func (w *CRDTWatcher) handleWrite(filePath string) {
 	// Generate CRDT operations from line diff
 	operations := w.generateOperations(filePath, oldLines, newLines)
 
+	fmt.Printf("  Generated %d operations for %s (old: %d lines, new: %d lines)\n",
+		len(operations), filePath, len(oldLines), len(newLines))
+
 	// Apply operations locally and broadcast
-	for _, op := range operations {
+	for i, op := range operations {
 		// Apply operation to CRDT engine
 		if err := w.CRDTEngine.ApplyOperation(w.SessionID, filePath, op); err != nil {
 			fmt.Printf("Error applying operation: %v\n", err)
@@ -281,12 +292,15 @@ func (w *CRDTWatcher) handleWrite(filePath string) {
 
 		// Trigger callback to broadcast operation
 		if w.OnChange != nil {
+			fmt.Printf("  Broadcasting operation %d/%d for %s: type=%s, content=%q\n",
+				i+1, len(operations), filePath, op.Type, op.Content)
 			w.OnChange(filePath, op)
 		}
 	}
 
 	// Update file state
 	state.Lines = newLines
+	fmt.Printf("✓ Completed processing write for: %s\n", filePath)
 }
 
 // handleCreate handles file creation events

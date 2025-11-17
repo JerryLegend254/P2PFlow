@@ -67,7 +67,7 @@ type CRDTNode struct {
 }
 
 // NewCRDTNode creates a new CRDT-aware P2P node
-func NewCRDTNode(ctx context.Context, listenPort int, agentID string) (*CRDTNode, error) {
+func NewCRDTNode(ctx context.Context, listenPort int, agentID string, crdtEngine *crdt.CRDTEngine) (*CRDTNode, error) {
 	// Create context with cancellation
 	nodeCtx, cancel := context.WithCancel(ctx)
 
@@ -100,8 +100,7 @@ func NewCRDTNode(ctx context.Context, listenPort int, agentID string) (*CRDTNode
 		return nil, fmt.Errorf("failed to create pubsub: %w", err)
 	}
 
-	// Initialize CRDT engine
-	crdtEngine := crdt.NewCRDTEngine()
+	// Use the provided CRDT engine instead of creating a new one
 
 	node := &CRDTNode{
 		host:             h,
@@ -148,6 +147,9 @@ func (n *CRDTNode) JoinSession(sessionID, agentID, agentName string) error {
 
 	// Start anti-entropy protocol
 	n.startAntiEntropy()
+
+	// Give pubsub time to propagate subscription (increased for reliability)
+	time.Sleep(2 * time.Second)
 
 	// Broadcast join message
 	joinMsg := CRDTJoinRequest{
