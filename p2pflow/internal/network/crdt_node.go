@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/crdt"
-	"github.com/JerryLegend254/p2pflow/internal/ignore"
 	"github.com/JerryLegend254/p2pflow/internal/modes"
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -59,9 +58,6 @@ type CRDTNode struct {
 	onFileListReceived    func(filePaths []string)
 	onFileContentReceived func(filePath, content string)
 	onSessionReceived     func(*crdt.CRDTSession)
-
-	// File filtering
-	ignoreMatcher *ignore.IgnoreMatcher
 
 	// Anti-entropy ticker
 	antiEntropyTicker *time.Ticker
@@ -348,13 +344,11 @@ func (n *CRDTNode) handleSyncRequest(msg *CRDTMessage) {
 	}
 
 	// Group operations by file path
+	// We need to track which file each operation belongs to
+	// This requires extending the operation log to include file paths
+	// For now, we'll send all operations under an empty key
 	opsByFile := make(map[string][]*crdt.Operation)
-	for _, op := range missingOps {
-		// We need to track which file each operation belongs to
-		// This requires extending the operation log to include file paths
-		// For now, we'll send all operations
-		opsByFile[""] = append(opsByFile[""], op)
-	}
+	opsByFile[""] = append(opsByFile[""], missingOps...)
 
 	// Send sync response
 	syncResp := CRDTSyncResponse{

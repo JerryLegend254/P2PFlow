@@ -3,8 +3,6 @@ package watcher
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -499,13 +497,6 @@ func parseContentToLines(content string) []string {
 	}
 
 	return lines
-}
-
-// generateCRDTAgentID generates a random agent ID for CRDT watchers
-func generateCRDTAgentID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 // GetFileContent returns the current content of a file being watched

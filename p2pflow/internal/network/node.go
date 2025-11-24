@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -1416,10 +1417,16 @@ func (n *P2PNode) ShouldSyncFile(filePath string) bool {
 		return true
 	}
 
+	// Clean the file path
+	cleanPath := filepath.Clean(filePath)
+
 	// Check selective paths
 	if n.modeConfig.Mode == modes.SelectiveMode && len(n.modeConfig.SelectivePaths) > 0 {
 		for _, path := range n.modeConfig.SelectivePaths {
-			if filepath.HasPrefix(filePath, path) {
+			cleanSelectivePath := filepath.Clean(path)
+			// Check if the file is within the selective path
+			rel, err := filepath.Rel(cleanSelectivePath, cleanPath)
+			if err == nil && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, "..") {
 				return true
 			}
 		}
@@ -1428,7 +1435,10 @@ func (n *P2PNode) ShouldSyncFile(filePath string) bool {
 
 	// Check exclude paths
 	for _, path := range n.modeConfig.ExcludePaths {
-		if filepath.HasPrefix(filePath, path) {
+		cleanExcludePath := filepath.Clean(path)
+		// Check if the file is within the exclude path
+		rel, err := filepath.Rel(cleanExcludePath, cleanPath)
+		if err == nil && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, "..") {
 			return false
 		}
 	}
