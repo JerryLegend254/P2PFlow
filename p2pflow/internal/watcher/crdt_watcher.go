@@ -238,7 +238,7 @@ func (w *CRDTWatcher) handleWrite(filePath string) {
 		w.incomingWritesMutex.Lock()
 		delete(w.incomingWrites, absPath)
 		w.incomingWritesMutex.Unlock()
-		fmt.Printf("✓ Skipping incoming write for: %s (tracked as %s)\n", filePath, absPath)
+		fmt.Printf("Skipping incoming write for: %s (tracked as %s)\n", filePath, absPath)
 
 		// Still need to update our file state
 		content, err := os.ReadFile(filePath)
@@ -300,7 +300,7 @@ func (w *CRDTWatcher) handleWrite(filePath string) {
 
 	// Update file state
 	state.Lines = newLines
-	fmt.Printf("✓ Completed processing write for: %s\n", filePath)
+	fmt.Printf("Completed processing write for: %s\n", filePath)
 }
 
 // handleCreate handles file creation events
@@ -560,4 +560,21 @@ func (w *CRDTWatcher) ApplyRemoteOperation(filePath string, op *crdt.Operation) 
 	// Note: file state will be updated by handleWrite after it processes the event
 
 	return nil
+}
+
+// MarkIncomingWrite marks a file path as an incoming write to prevent loop
+// This should be called before writing a file that comes from a remote source
+// (e.g., initial sync, remote operations) to prevent the watcher from generating
+// operations for content that was not locally edited.
+func (w *CRDTWatcher) MarkIncomingWrite(filePath string) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		absPath = filePath
+	}
+
+	w.incomingWritesMutex.Lock()
+	w.incomingWrites[absPath] = true
+	w.incomingWritesMutex.Unlock()
+
+	fmt.Printf("Marked as incoming write: %s (tracked as %s)\n", filePath, absPath)
 }

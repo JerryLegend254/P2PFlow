@@ -359,20 +359,20 @@ func (app *application) newAnalyticsAnomaliesCommand() *cobra.Command {
 			for i, anomaly := range anomalies {
 				// Severity indicator
 				severityColor := yellow
-				severityIcon := "⚠"
+				severityIcon := "!"
 				switch anomaly.Severity {
 				case analytics.SeverityCritical:
 					severityColor = red
-					severityIcon = "🚨"
+					severityIcon = "!!"
 				case analytics.SeverityHigh:
 					severityColor = red
-					severityIcon = "⚠"
+					severityIcon = "!"
 				case analytics.SeverityMedium:
 					severityColor = yellow
-					severityIcon = "⚠"
+					severityIcon = "!"
 				case analytics.SeverityLow:
 					severityColor = color.New(color.FgWhite).SprintFunc()
-					severityIcon = "ℹ"
+					severityIcon = "i"
 				}
 
 				fmt.Printf("%s %s [%s] %s\n",

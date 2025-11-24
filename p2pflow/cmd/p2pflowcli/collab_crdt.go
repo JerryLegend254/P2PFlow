@@ -67,7 +67,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			green := color.New(color.FgGreen).SprintFunc()
 			yellow := color.New(color.FgYellow).SprintFunc()
 
-			app.console.Infof("🚀 Starting CRDT collaboration session...")
+			app.console.Infof("Starting CRDT collaboration session...")
 			app.console.Infof("Session ID: %s", cyan(sessionID))
 			app.console.Infof("Path: %s", yellow(filePath))
 			app.console.Infof("Agent: %s", green(agentName))
@@ -144,7 +144,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 					return fmt.Errorf("failed to scan directory: %w", err)
 				}
 
-				fmt.Printf("✓ Added %s to session (%s)\n", green(fmt.Sprintf("%d files", fileCount)), cyan(formatBytes(totalSize)))
+				fmt.Printf("Added %s to session (%s)\n", green(fmt.Sprintf("%d files", fileCount)), cyan(formatBytes(totalSize)))
 
 			} else {
 				// Single file mode
@@ -157,7 +157,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 					return fmt.Errorf("failed to initialize document: %w", err)
 				}
 
-				fmt.Printf("✓ Added %s to session (%s)\n", green("1 file"), cyan(formatBytes(int64(len(content)))))
+				fmt.Printf("Added %s to session (%s)\n", green("1 file"), cyan(formatBytes(int64(len(content)))))
 			}
 
 			app.console.Infof("Session created: %s", session.ID)
@@ -165,8 +165,8 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			app.console.Infof("Node ID: %s", node.GetNodeID())
 
 			// Print connection info
-			app.console.Infof("\n📡 Peers can join using:")
-			app.console.Infof("  p2pflow collab-crdt join %s --port <port>", cyan(sessionID))
+			app.console.Infof("\nPeers can join using:")
+			app.console.Infof("  p2pflow collab-crdt join %s --port 4002", cyan(sessionID))
 
 			// Set up CRDT watcher
 			crdtWatcher, err := watcher.NewCRDTWatcher(filePath, crdtEngine, sessionID, agentID)
@@ -186,13 +186,13 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 				if err := node.BroadcastOperation(filePath, op); err != nil {
 					log.Printf("Failed to broadcast operation: %v", err)
 				} else {
-					app.console.Infof("📤 Broadcasted change to %s", filePath)
+					app.console.Infof("Broadcasted change to %s", filePath)
 				}
 			}
 
 			// Set up node callback to apply remote operations
 			node.SetOnOperation(func(msg *network.CRDTOperationMessage) {
-				app.console.Infof("📥 Received change to %s from remote peer", msg.FilePath)
+				app.console.Infof("Received change to %s from remote peer", msg.FilePath)
 
 				// ApplyRemoteOperation handles incoming write tracking internally
 				if err := crdtWatcher.ApplyRemoteOperation(msg.FilePath, msg.Operation); err != nil {
@@ -202,11 +202,11 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 
 			// Set up peer connection handlers
 			node.SetOnPeerConnected(func(peerID peer.ID) {
-				app.console.Infof("✓ Peer connected: %s", green(peerID.String()))
+				app.console.Infof("Peer connected: %s", green(peerID.String()))
 			})
 
 			node.SetOnPeerDisconnected(func(peerID peer.ID) {
-				app.console.Infof("✗ Peer disconnected: %s", yellow(peerID.String()))
+				app.console.Infof("Peer disconnected: %s", yellow(peerID.String()))
 			})
 
 			// Start watcher
@@ -221,8 +221,8 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 				}
 			}()
 
-			app.console.Infof("👁  File watcher started for: %s", filePath)
-			app.console.Infof("\n✨ CRDT collaboration session is running!")
+			app.console.Infof("File watcher started for: %s", filePath)
+			app.console.Infof("\nCRDT collaboration session is running!")
 			app.console.Infof("   Press Ctrl+C to stop\n")
 
 			// Periodic stats display
@@ -233,7 +233,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 				for range ticker.C {
 					stats, err := crdtEngine.GetStats(sessionID)
 					if err == nil {
-						app.console.Infof("📊 Stats: %d documents, %d agents, %d operations, %d tombstones",
+						app.console.Infof("Stats: %d documents, %d agents, %d operations, %d tombstones",
 							stats.DocumentCount, stats.AgentCount, stats.OperationCount, stats.TotalTombstones)
 					}
 				}
@@ -244,7 +244,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 			<-sigCh
-			app.console.Infof("\n👋 Shutting down...")
+			app.console.Infof("\nShutting down...")
 			cancel()
 
 			// Save session state
@@ -252,7 +252,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			if err := persistence.SaveSession(session); err != nil {
 				app.console.Errorf("Failed to save session: %v", err)
 			} else {
-				app.console.Infof("✓ Session state saved")
+				app.console.Infof("Session state saved")
 			}
 
 			return nil
@@ -304,7 +304,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 			green := color.New(color.FgGreen).SprintFunc()
 			yellow := color.New(color.FgYellow).SprintFunc()
 
-			app.console.Infof("🔗 Joining CRDT collaboration session...")
+			app.console.Infof("Joining CRDT collaboration session...")
 			app.console.Infof("Session ID: %s", cyan(sessionID))
 			app.console.Infof("Path: %s", yellow(filePath))
 			app.console.Infof("Agent: %s", green(agentName))
@@ -320,7 +320,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 			persistence := crdt.NewSessionPersistence(".")
 			existingSession, err := persistence.LoadSession(sessionID)
 			if err == nil {
-				app.console.Infof("✓ Loaded existing session from disk")
+				app.console.Infof("Loaded existing session from disk")
 				crdtEngine.ImportSession(existingSession)
 			}
 
@@ -344,7 +344,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 			}
 
 			app.console.Infof("Node ID: %s", node.GetNodeID())
-			app.console.Infof("✓ Joined session: %s", sessionID)
+			app.console.Infof("Joined session: %s", sessionID)
 
 			// Set up CRDT watcher
 			crdtWatcher, err := watcher.NewCRDTWatcher(filePath, crdtEngine, sessionID, agentID)
@@ -364,14 +364,14 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				if err := node.BroadcastOperation(filePath, op); err != nil {
 					log.Printf("Failed to broadcast operation: %v", err)
 				} else {
-					app.console.Infof("📤 Broadcasted change to %s", filePath)
+					app.console.Infof("Broadcasted change to %s", filePath)
 				}
 			}
 
 			// Set up callback for when full session state is received
 			receivedFiles := make(map[string]bool)
 			node.SetOnSessionReceived(func(session *crdt.CRDTSession) {
-				app.console.Infof("📦 Received session state with %d documents", len(session.Documents))
+				app.console.Infof("Received session state with %d documents", len(session.Documents))
 
 				// Write all documents to files
 				for docPath := range session.Documents {
@@ -392,14 +392,19 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 						continue
 					}
 
+					// Mark as incoming write to prevent watcher from generating operations
+					// when we write the initial synced content
+					crdtWatcher.MarkIncomingWrite(fullPath)
+
 					// Write file
 					if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 						log.Printf("Failed to write file %s: %v", docPath, err)
 					} else {
-						app.console.Infof("✓ Synced file: %s (%d bytes)", docPath, len(content))
+						app.console.Infof("Synced file: %s (%d bytes)", docPath, len(content))
 						receivedFiles[docPath] = true
 
-						// Initialize watcher state for this file
+						// Initialize watcher state for this file AFTER writing
+						// This ensures the watcher's state matches the file content
 						if err := crdtWatcher.InitializeFile(fullPath); err != nil {
 							log.Printf("Failed to initialize watcher for %s: %v", fullPath, err)
 						}
@@ -411,7 +416,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 
 			// Set up node callback to apply remote operations
 			node.SetOnOperation(func(msg *network.CRDTOperationMessage) {
-				app.console.Infof("📥 Received change to %s", msg.FilePath)
+				app.console.Infof("Received change to %s", msg.FilePath)
 
 				// For new files, ensure they exist
 				if !receivedFiles[msg.FilePath] {
@@ -431,7 +436,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 						if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 							log.Printf("Failed to create file: %v", err)
 						} else {
-							app.console.Infof("✓ Created file: %s", msg.FilePath)
+							app.console.Infof("Created file: %s", msg.FilePath)
 						}
 					}
 
@@ -445,7 +450,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 
 			// Set up peer connection handlers
 			node.SetOnPeerConnected(func(peerID peer.ID) {
-				app.console.Infof("✓ Peer connected: %s", green(peerID.String()))
+				app.console.Infof("Peer connected: %s", green(peerID.String()))
 
 				// Request sync when a peer connects
 				session, _ := crdtEngine.GetSession(sessionID)
@@ -453,13 +458,13 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 					if err := node.RequestSync(session.VectorClock); err != nil {
 						log.Printf("Failed to request sync: %v", err)
 					} else {
-						app.console.Infof("📡 Requested sync from peer")
+						app.console.Infof("Requested sync from peer")
 					}
 				}
 			})
 
 			node.SetOnPeerDisconnected(func(peerID peer.ID) {
-				app.console.Infof("✗ Peer disconnected: %s", yellow(peerID.String()))
+				app.console.Infof("Peer disconnected: %s", yellow(peerID.String()))
 			})
 
 			// Start watcher
@@ -474,8 +479,8 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				}
 			}()
 
-			app.console.Infof("👁  File watcher started for: %s", filePath)
-			app.console.Infof("\n✨ Connected to CRDT collaboration session!")
+			app.console.Infof("File watcher started for: %s", filePath)
+			app.console.Infof("\nConnected to CRDT collaboration session!")
 			app.console.Infof("   Waiting for file synchronization...")
 			app.console.Infof("   Press Ctrl+C to stop\n")
 
@@ -487,7 +492,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				for range ticker.C {
 					stats, err := crdtEngine.GetStats(sessionID)
 					if err == nil {
-						app.console.Infof("📊 Stats: %d documents, %d agents, %d operations, %d tombstones",
+						app.console.Infof("Stats: %d documents, %d agents, %d operations, %d tombstones",
 							stats.DocumentCount, stats.AgentCount, stats.OperationCount, stats.TotalTombstones)
 					}
 				}
@@ -498,7 +503,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 			<-sigCh
-			app.console.Infof("\n👋 Shutting down...")
+			app.console.Infof("\nShutting down...")
 			cancel()
 
 			// Save session state
@@ -507,7 +512,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				if err := persistence.SaveSession(session); err != nil {
 					app.console.Errorf("Failed to save session: %v", err)
 				} else {
-					app.console.Infof("✓ Session state saved")
+					app.console.Infof("Session state saved")
 				}
 			}
 

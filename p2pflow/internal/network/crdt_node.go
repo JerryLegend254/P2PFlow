@@ -158,9 +158,11 @@ func (n *CRDTNode) JoinSession(sessionID, agentID, agentName string) error {
 		AgentName: agentName,
 	}
 
+	log.Printf("Broadcasting join message for session %s", sessionID)
 	if err := n.broadcastCRDTMessage(CRDTMessageTypeJoin, joinMsg); err != nil {
 		return fmt.Errorf("failed to broadcast join message: %w", err)
 	}
+	log.Printf("Join message broadcast complete")
 
 	log.Printf("Joined CRDT session %s as agent %s", sessionID, agentID)
 	return nil
@@ -193,10 +195,12 @@ func (n *CRDTNode) RequestSync(vectorClock *crdt.VectorClock) error {
 
 // handleMessages handles incoming CRDT messages from peers
 func (n *CRDTNode) handleMessages() {
+	log.Printf("Message handler started, listening for messages...")
 	for {
 		msg, err := n.sub.Next(n.ctx)
 		if err != nil {
 			if n.ctx.Err() != nil {
+				log.Printf("Message handler stopping: context cancelled")
 				return // Context cancelled, shutting down
 			}
 			log.Printf("Error reading message: %v", err)
@@ -205,6 +209,7 @@ func (n *CRDTNode) handleMessages() {
 
 		// Ignore messages from self
 		if msg.ReceivedFrom == n.host.ID() {
+			log.Printf("Ignoring message from self")
 			continue
 		}
 
@@ -214,6 +219,8 @@ func (n *CRDTNode) handleMessages() {
 			log.Printf("Failed to unmarshal CRDT message: %v", err)
 			continue
 		}
+
+		log.Printf("Received CRDT message type %d from %s", crdtMsg.Type, msg.ReceivedFrom)
 
 		// Handle message based on type
 		switch crdtMsg.Type {
@@ -263,6 +270,8 @@ func (n *CRDTNode) handleJoinMessage(msg *CRDTMessage) {
 		return
 	}
 
+	log.Printf("Sending session state to new peer (session has %d documents)", len(session.Documents))
+
 	// Broadcast session state
 	joinResp := CRDTJoinResponse{
 		Session: session,
@@ -270,6 +279,8 @@ func (n *CRDTNode) handleJoinMessage(msg *CRDTMessage) {
 
 	if err := n.broadcastCRDTMessage(CRDTMessageTypeSyncResponse, joinResp); err != nil {
 		log.Printf("Failed to send join response: %v", err)
+	} else {
+		log.Printf("Session state broadcast complete")
 	}
 
 	// Trigger callback

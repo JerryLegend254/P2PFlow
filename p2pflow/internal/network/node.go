@@ -420,7 +420,7 @@ filesReceived:
 	// Download each file
 	if fileManifest != nil && len(fileManifest.Files) > 0 {
 		totalFiles := len(fileManifest.Files)
-		fmt.Printf("\n📥 Downloading %d files...\n\n", totalFiles)
+		fmt.Printf("\nDownloading %d files...\n\n", totalFiles)
 
 		// Create progress bar
 		bar := progressbar.NewOptions(totalFiles,
@@ -509,7 +509,7 @@ filesReceived:
 		fmt.Printf("      • Total size: %s\n", formatBytes(totalBytes))
 
 		if len(failedFiles) > 0 {
-			fmt.Printf("\n   ⚠️  Failed files:\n")
+			fmt.Printf("\n   Failed files:\n")
 			for _, f := range failedFiles {
 				fmt.Printf("      - %s\n", f)
 			}

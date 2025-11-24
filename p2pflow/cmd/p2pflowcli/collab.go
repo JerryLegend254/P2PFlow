@@ -156,7 +156,7 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 					return fmt.Errorf("failed to scan directory: %w", err)
 				}
 
-				fmt.Printf("✓ Added %s to session (%s)\n", green(fmt.Sprintf("%d files", fileCount)), cyan(formatBytes(totalSize)))
+				fmt.Printf("Added %s to session (%s)\n", green(fmt.Sprintf("%d files", fileCount)), cyan(formatBytes(totalSize)))
 
 			} else {
 				// Single file mode (backward compatibility)
@@ -186,12 +186,12 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 			}
 
 			app.console.Infof("\nPeers can join using:")
-			app.console.Infof("  p2pflow collab join %s --port <port>", sessionID)
+			app.console.Infof("  p2pflow collab join %s --port 4002", sessionID)
 			if len(addrs) > 0 {
 				// Show example with first address
 				firstAddr := fmt.Sprintf("%s/p2p/%s", addrs[0], node.GetHost().ID())
 				app.console.Infof("\nOr with explicit peer connection:")
-				app.console.Infof("  p2pflow collab join %s --port <port> --peer %s", sessionID, firstAddr)
+				app.console.Infof("  p2pflow collab join %s --port 4002 --peer %s", sessionID, firstAddr)
 			}
 
 			// Set up peer connection handler
@@ -294,7 +294,7 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 					app.console.Warnf("Failed to connect to bootstrap peer: %v", err)
 				} else {
 					s.Stop()
-					fmt.Printf("✓ %s to peer\n", green("Connected"))
+					fmt.Printf("%s to peer\n", green("Connected"))
 				}
 			}
 
@@ -439,10 +439,10 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 		changeEvent := &collab.ChangeEvent{
 			SessionID:   sessionID,
 			AgentID:     agentName,
-			FilePath:    relPath,  // Use relative path
+			FilePath:    relPath, // Use relative path
 			Patch:       patch,
 			Version:     session.Version,
-			BaseVersion: baseVersion,  // Version patch was created from
+			BaseVersion: baseVersion, // Version patch was created from
 		}
 
 		// Apply change locally
