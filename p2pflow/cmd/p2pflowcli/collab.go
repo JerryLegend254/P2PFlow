@@ -8,13 +8,19 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/collab"
+	"github.com/JerryLegend254/p2pflow/internal/modes"
 	"github.com/JerryLegend254/p2pflow/internal/network"
 	"github.com/JerryLegend254/p2pflow/internal/watcher"
+	"github.com/briandowns/spinner"
+	"github.com/fatih/color"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func (app *application) newCollabCommand() *cobra.Command {
@@ -33,6 +39,7 @@ func (app *application) newCollabCommand() *cobra.Command {
 func (app *application) newCollabServeCommand() *cobra.Command {
 	var filePath string
 	var port int
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "serve [file]",
@@ -48,15 +55,13 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				return fmt.Errorf("file path is required")
 			}
 
-			// Check if file exists
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				return fmt.Errorf("file does not exist: %s", filePath)
+			// Check if path exists
+			info, err := os.Stat(filePath)
+			if os.IsNotExist(err) {
+				return fmt.Errorf("path does not exist: %s", filePath)
 			}
-
-			// Read file content
-			content, err := os.ReadFile(filePath)
 			if err != nil {
-				return fmt.Errorf("failed to read file: %w", err)
+				return fmt.Errorf("failed to stat path: %w", err)
 			}
 
 			// Generate session ID
@@ -69,17 +74,30 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				agentName = cfg.Auth.Username
 			}
 
+			// Get mode configuration
+			modeConfig, err := parseModeFlag(modeFlag)
+			if err != nil {
+				return fmt.Errorf("invalid mode: %w", err)
+			}
+
+			cyan := color.New(color.FgCyan).SprintFunc()
+			green := color.New(color.FgGreen).SprintFunc()
+
 			app.console.Infof("Starting collaboration session...")
-			app.console.Infof("Session ID: %s", sessionID)
-			app.console.Infof("File: %s", filePath)
-			app.console.Infof("Agent: %s", agentName)
+			app.console.Infof("Session ID: %s", cyan(sessionID))
+			app.console.Infof("Path: %s", filePath)
+			app.console.Infof("Agent: %s", green(agentName))
+			app.console.Infof("Mode: %s", green(string(modeConfig.Mode)))
+			if modeConfig.Mode != modes.RealtimeMode {
+				app.console.Infof("  ℹ  %s", modes.GetModeDescription(modeConfig.Mode))
+			}
 
 			// Create context
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Create P2P node
-			node, err := network.NewP2PNode(ctx, port, agentName)
+			// Create P2P node with mode
+			node, err := network.NewP2PNodeWithMode(ctx, port, agentName, modeConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create P2P node: %w", err)
 			}
@@ -90,25 +108,114 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				return fmt.Errorf("failed to start P2P node: %w", err)
 			}
 
-			// Create session
-			session, err := node.CreateSession(sessionID, filePath, string(content))
-			if err != nil {
-				return fmt.Errorf("failed to create session: %w", err)
+			var session *collab.Session
+
+			if info.IsDir() {
+				// Directory mode - scan all files
+				cyan := color.New(color.FgCyan).SprintFunc()
+				green := color.New(color.FgGreen).SprintFunc()
+
+				s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+				s.Suffix = " Scanning directory..."
+				s.Start()
+
+				// Create session with empty content for backward compatibility
+				session, err = node.CreateSession(sessionID, "", "")
+				if err != nil {
+					s.Stop()
+					return fmt.Errorf("failed to create session: %w", err)
+				}
+
+				// Set the root path for the session
+				session.RootPath = filePath
+
+				// Scan and add all files
+				fileCount := 0
+				var totalSize int64
+				err = filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return err
+					}
+
+					// Skip directories and hidden files
+					if info.IsDir() || info.Name()[0] == '.' {
+						return nil
+					}
+
+					// Read file content
+					content, err := os.ReadFile(path)
+					if err != nil {
+						return nil
+					}
+
+					// Convert to relative path from session root
+					relPath, err := filepath.Rel(filePath, path)
+					if err != nil {
+						relPath = path // Fallback to absolute if rel fails
+					}
+
+					// Add file to session with relative path
+					if err := node.GetCollabEngine().AddFile(sessionID, relPath, string(content)); err != nil {
+						return nil
+					}
+
+					fileCount++
+					totalSize += int64(len(content))
+					s.Suffix = fmt.Sprintf(" Scanning directory... (%d files, %s)", fileCount, formatBytes(totalSize))
+					return nil
+				})
+
+				s.Stop()
+
+				if err != nil {
+					return fmt.Errorf("failed to scan directory: %w", err)
+				}
+
+				fmt.Printf("Added %s to session (%s)\n", green(fmt.Sprintf("%d files", fileCount)), cyan(formatBytes(totalSize)))
+
+			} else {
+				// Single file mode (backward compatibility)
+				content, err := os.ReadFile(filePath)
+				if err != nil {
+					return fmt.Errorf("failed to read file: %w", err)
+				}
+
+				session, err = node.CreateSession(sessionID, filePath, string(content))
+				if err != nil {
+					return fmt.Errorf("failed to create session: %w", err)
+				}
 			}
 
 			app.console.Infof("Session created: %s", session.ID)
 			app.console.Infof("Listening on port: %d", port)
 			app.console.Infof("Node ID: %s", node.GetHost().ID())
+
+			// Print multiaddress for manual connection
+			addrs := node.GetHost().Addrs()
+			if len(addrs) > 0 {
+				app.console.Infof("\nNode multiaddresses:")
+				for _, addr := range addrs {
+					fullAddr := fmt.Sprintf("%s/p2p/%s", addr, node.GetHost().ID())
+					app.console.Infof("  %s", fullAddr)
+				}
+			}
+
 			app.console.Infof("\nPeers can join using:")
-			app.console.Infof("  p2pflow collab join %s", sessionID)
+			app.console.Infof("  p2pflow collab join %s --port 4002", sessionID)
+			if len(addrs) > 0 {
+				// Show example with first address
+				firstAddr := fmt.Sprintf("%s/p2p/%s", addrs[0], node.GetHost().ID())
+				app.console.Infof("\nOr with explicit peer connection:")
+				app.console.Infof("  p2pflow collab join %s --port 4002 --peer %s", sessionID, firstAddr)
+			}
 
 			// Set up peer connection handler
 			node.SetOnPeerConnected(func(peerID peer.ID) {
 				app.console.Infof("Peer connected: %s", peerID)
 			})
 
-			// Set up file watcher
-			fileWatcher, err := createFileWatcher(node, filePath, sessionID, agentName)
+			// Set up file watcher (use node ID as agent ID to match the session)
+			fileWatcher, err := createFileWatcher(node, filePath, sessionID, node.GetNodeID())
 			if err != nil {
 				app.console.Errorf("Failed to create file watcher: %v", err)
 			} else {
@@ -141,6 +248,7 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "File path to serve")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVarP(&modeFlag, "mode", "m", "realtime", "Collaboration mode: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective")
 
 	return cmd
 }
@@ -148,6 +256,8 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 func (app *application) newCollabJoinCommand() *cobra.Command {
 	var filePath string
 	var port int
+	var bootstrapPeer string
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "join <session-id>",
@@ -168,16 +278,29 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 				agentName = cfg.Auth.Username
 			}
 
+			// Get mode configuration
+			modeConfig, err := parseModeFlag(modeFlag)
+			if err != nil {
+				return fmt.Errorf("invalid mode: %w", err)
+			}
+
+			cyan := color.New(color.FgCyan).SprintFunc()
+			green := color.New(color.FgGreen).SprintFunc()
+
 			app.console.Infof("Joining collaboration session...")
-			app.console.Infof("Session ID: %s", sessionID)
-			app.console.Infof("Agent: %s", agentName)
+			app.console.Infof("Session ID: %s", cyan(sessionID))
+			app.console.Infof("Agent: %s", green(agentName))
+			app.console.Infof("Mode: %s", green(string(modeConfig.Mode)))
+			if modeConfig.Mode != modes.RealtimeMode {
+				app.console.Infof("  ℹ  %s", modes.GetModeDescription(modeConfig.Mode))
+			}
 
 			// Create context
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Create P2P node
-			node, err := network.NewP2PNode(ctx, port, agentName)
+			// Create P2P node with mode
+			node, err := network.NewP2PNodeWithMode(ctx, port, agentName, modeConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create P2P node: %w", err)
 			}
@@ -186,6 +309,23 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 			// Start the node
 			if err := node.Start(); err != nil {
 				return fmt.Errorf("failed to start P2P node: %w", err)
+			}
+
+			// Connect to bootstrap peer if provided
+			if bootstrapPeer != "" {
+				green := color.New(color.FgGreen).SprintFunc()
+
+				s := spinner.New(spinner.CharSets[11], 100*time.Millisecond)
+				s.Suffix = " Connecting to peer..."
+				s.Start()
+
+				if err := node.ConnectToPeer(bootstrapPeer); err != nil {
+					s.Stop()
+					app.console.Warnf("Failed to connect to bootstrap peer: %v", err)
+				} else {
+					s.Stop()
+					fmt.Printf("%s to peer\n", green("Connected"))
+				}
 			}
 
 			// Prepare initial content
@@ -222,9 +362,22 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 				}
 			})
 
-			// Set up file watcher if file path is provided
-			if filePath != "" {
-				fileWatcher, err := createFileWatcher(node, filePath, sessionID, agentName)
+			// Set up file watcher - watch the session directory for bidirectional sync
+			// If --file flag is provided, use that path; otherwise use current directory
+			watchPath := filePath
+			if watchPath == "" {
+				// Get session root path from node
+				rootPath, err := node.GetSessionRootPath()
+				if err == nil && rootPath != "" {
+					watchPath = rootPath
+				} else {
+					// Fall back to current working directory
+					watchPath, _ = os.Getwd()
+				}
+			}
+
+			if watchPath != "" {
+				fileWatcher, err := createFileWatcher(node, watchPath, sessionID, node.GetNodeID())
 				if err != nil {
 					app.console.Errorf("Failed to create file watcher: %v", err)
 				} else {
@@ -239,7 +392,7 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 						}
 					}()
 
-					app.console.Infof("File watcher started for: %s", filePath)
+					app.console.Infof("File watcher started for: %s", watchPath)
 				}
 			}
 
@@ -257,6 +410,8 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Local file path to sync")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVarP(&bootstrapPeer, "peer", "b", "", "Bootstrap peer multiaddress (e.g., /ip4/127.0.0.1/tcp/4001/p2p/12D3...)")
+	cmd.Flags().StringVarP(&modeFlag, "mode", "m", "realtime", "Collaboration mode: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective")
 
 	return cmd
 }
@@ -269,12 +424,26 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 
-	// Override the session ID
+	// Override the session ID and replace the collaboration engine with the node's engine
 	w.SessionID = sessionID
 	w.AgentID = agentName
+	w.CollabEngine = node.GetCollabEngine()
+
+	// Load ignore patterns from configuration
+	cfg := loadConfigForIgnore()
+	w.LoadIgnorePatterns(cfg.Ignore.UseDefaults, cfg.Ignore.UseP2PIgnore, cfg.Ignore.Patterns)
+
+	// Share the ignore matcher with the node
+	node.SetIgnoreMatcher(w.IgnoreMatcher)
+
+	// Share the analytics engine with the watcher
+	w.AnalyticsEngine = node.GetAnalyticsEngine()
+
+	// Set up incoming write check to prevent loops
+	w.IsIncomingWrite = node.IsIncomingWrite
 
 	// Set up change handler
-	w.OnChange = func(patch string) {
+	w.OnChange = func(patch string, changedFilePath string) {
 		// Get the session to apply changes
 		session, err := w.CollabEngine.GetSession(sessionID)
 		if err != nil {
@@ -282,12 +451,29 @@ func createFileWatcher(node *network.P2PNode, filePath, sessionID, agentName str
 			return
 		}
 
-		// Create change event
+		// Convert absolute path to relative path from session root
+		relPath := changedFilePath
+		if session.RootPath != "" && filepath.IsAbs(changedFilePath) {
+			rel, err := filepath.Rel(session.RootPath, changedFilePath)
+			if err == nil {
+				relPath = rel
+			}
+		}
+
+		// Get the current file version to use as base
+		baseVersion := 0
+		if file, err := w.CollabEngine.GetFile(sessionID, relPath); err == nil {
+			baseVersion = file.Version
+		}
+
+		// Create change event with relative file path and version info
 		changeEvent := &collab.ChangeEvent{
-			SessionID: sessionID,
-			AgentID:   agentName,
-			Patch:     patch,
-			Version:   session.Version,
+			SessionID:   sessionID,
+			AgentID:     agentName,
+			FilePath:    relPath, // Use relative path
+			Patch:       patch,
+			Version:     session.Version,
+			BaseVersion: baseVersion, // Version patch was created from
 		}
 
 		// Apply change locally
@@ -310,4 +496,51 @@ func generateSessionID() string {
 	bytes := make([]byte, 8)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// formatBytes converts bytes to human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// loadConfigForIgnore loads configuration specifically for ignore patterns
+func loadConfigForIgnore() *appConfig {
+	cfg := &appConfig{}
+
+	// Set defaults
+	cfg.Ignore.UseDefaults = viper.GetBool("ignore.use_defaults")
+	cfg.Ignore.UseP2PIgnore = viper.GetBool("ignore.use_p2pignore")
+	cfg.Ignore.Patterns = viper.GetStringSlice("ignore.patterns")
+
+	// Apply defaults if not set
+	if !viper.IsSet("ignore.use_defaults") {
+		cfg.Ignore.UseDefaults = true
+	}
+	if !viper.IsSet("ignore.use_p2pignore") {
+		cfg.Ignore.UseP2PIgnore = true
+	}
+
+	return cfg
+}
+
+// parseModeFlag parses the mode flag and returns the appropriate mode configuration
+func parseModeFlag(modeFlag string) (modes.ModeConfig, error) {
+	mode := modes.CollaborationMode(modeFlag)
+
+	// Check if it's a valid predefined mode
+	config, err := modes.GetModeConfig(mode)
+	if err != nil {
+		return modes.ModeConfig{}, fmt.Errorf("unknown mode '%s'. Available modes: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective", modeFlag)
+	}
+
+	return config, nil
 }

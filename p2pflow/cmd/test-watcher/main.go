@@ -30,8 +30,8 @@ func main() {
 		jsonLogger.Fatalf("Failed to create watcher: %v", err)
 	}
 
-	w.OnChange = func(patch string) {
-		jsonLogger.Infof("Patch generated: %s", patch)
+	w.OnChange = func(patch string, filePath string) {
+		jsonLogger.Infof("Patch generated for %s: %s", filePath, patch)
 	}
 
 	errCh := make(chan error)

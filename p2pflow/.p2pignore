@@ -1,0 +1,35 @@
+# P2PFlow Project Ignore File
+# Don't sync these files and directories
+
+# Build artifacts
+bin/
+*.exe
+*.test
+
+# Collaboration metadata
+.collab/
+
+# Dependencies
+vendor/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+
+# Documentation build artifacts (but keep source docs)
+*.md.backup

@@ -21,8 +21,8 @@ func main() {
 	}
 
 	// Set up OnChange callback to handle patches
-	w.OnChange = func(patch string) {
-		app.logger.Infof("Patch generated: %s", patch)
+	w.OnChange = func(patch string, filePath string) {
+		app.logger.Infof("Patch generated for %s: %s", filePath, patch)
 	}
 
 	errCh := make(chan error)
