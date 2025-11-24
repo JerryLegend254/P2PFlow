@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/collab"
+	"github.com/JerryLegend254/p2pflow/internal/modes"
 	"github.com/JerryLegend254/p2pflow/internal/network"
 	"github.com/JerryLegend254/p2pflow/internal/watcher"
 	"github.com/briandowns/spinner"
@@ -38,6 +39,7 @@ func (app *application) newCollabCommand() *cobra.Command {
 func (app *application) newCollabServeCommand() *cobra.Command {
 	var filePath string
 	var port int
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "serve [file]",
@@ -72,17 +74,30 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 				agentName = cfg.Auth.Username
 			}
 
+			// Get mode configuration
+			modeConfig, err := parseModeFlag(modeFlag)
+			if err != nil {
+				return fmt.Errorf("invalid mode: %w", err)
+			}
+
+			cyan := color.New(color.FgCyan).SprintFunc()
+			green := color.New(color.FgGreen).SprintFunc()
+
 			app.console.Infof("Starting collaboration session...")
-			app.console.Infof("Session ID: %s", sessionID)
+			app.console.Infof("Session ID: %s", cyan(sessionID))
 			app.console.Infof("Path: %s", filePath)
-			app.console.Infof("Agent: %s", agentName)
+			app.console.Infof("Agent: %s", green(agentName))
+			app.console.Infof("Mode: %s", green(string(modeConfig.Mode)))
+			if modeConfig.Mode != modes.RealtimeMode {
+				app.console.Infof("  ℹ  %s", modes.GetModeDescription(modeConfig.Mode))
+			}
 
 			// Create context
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Create P2P node
-			node, err := network.NewP2PNode(ctx, port, agentName)
+			// Create P2P node with mode
+			node, err := network.NewP2PNodeWithMode(ctx, port, agentName, modeConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create P2P node: %w", err)
 			}
@@ -233,6 +248,7 @@ func (app *application) newCollabServeCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "File path to serve")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVarP(&modeFlag, "mode", "m", "realtime", "Collaboration mode: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective")
 
 	return cmd
 }
@@ -241,6 +257,7 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 	var filePath string
 	var port int
 	var bootstrapPeer string
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "join <session-id>",
@@ -261,16 +278,29 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 				agentName = cfg.Auth.Username
 			}
 
+			// Get mode configuration
+			modeConfig, err := parseModeFlag(modeFlag)
+			if err != nil {
+				return fmt.Errorf("invalid mode: %w", err)
+			}
+
+			cyan := color.New(color.FgCyan).SprintFunc()
+			green := color.New(color.FgGreen).SprintFunc()
+
 			app.console.Infof("Joining collaboration session...")
-			app.console.Infof("Session ID: %s", sessionID)
-			app.console.Infof("Agent: %s", agentName)
+			app.console.Infof("Session ID: %s", cyan(sessionID))
+			app.console.Infof("Agent: %s", green(agentName))
+			app.console.Infof("Mode: %s", green(string(modeConfig.Mode)))
+			if modeConfig.Mode != modes.RealtimeMode {
+				app.console.Infof("  ℹ  %s", modes.GetModeDescription(modeConfig.Mode))
+			}
 
 			// Create context
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Create P2P node
-			node, err := network.NewP2PNode(ctx, port, agentName)
+			// Create P2P node with mode
+			node, err := network.NewP2PNodeWithMode(ctx, port, agentName, modeConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create P2P node: %w", err)
 			}
@@ -381,6 +411,7 @@ func (app *application) newCollabJoinCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Local file path to sync")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
 	cmd.Flags().StringVarP(&bootstrapPeer, "peer", "b", "", "Bootstrap peer multiaddress (e.g., /ip4/127.0.0.1/tcp/4001/p2p/12D3...)")
+	cmd.Flags().StringVarP(&modeFlag, "mode", "m", "realtime", "Collaboration mode: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective")
 
 	return cmd
 }
@@ -499,4 +530,17 @@ func loadConfigForIgnore() *appConfig {
 	}
 
 	return cfg
+}
+
+// parseModeFlag parses the mode flag and returns the appropriate mode configuration
+func parseModeFlag(modeFlag string) (modes.ModeConfig, error) {
+	mode := modes.CollaborationMode(modeFlag)
+
+	// Check if it's a valid predefined mode
+	config, err := modes.GetModeConfig(mode)
+	if err != nil {
+		return modes.ModeConfig{}, fmt.Errorf("unknown mode '%s'. Available modes: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective", modeFlag)
+	}
+
+	return config, nil
 }

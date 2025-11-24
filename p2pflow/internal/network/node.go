@@ -15,6 +15,7 @@ import (
 	"github.com/JerryLegend254/p2pflow/internal/analytics"
 	"github.com/JerryLegend254/p2pflow/internal/collab"
 	"github.com/JerryLegend254/p2pflow/internal/ignore"
+	"github.com/JerryLegend254/p2pflow/internal/modes"
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pubsub_pb "github.com/libp2p/go-libp2p-pubsub/pb"
@@ -73,6 +74,13 @@ type P2PNode struct {
 
 	// Analytics engine
 	analyticsEngine *analytics.AnalyticsEngine
+
+	// Mode configuration
+	modeConfig *modes.ModeConfig
+
+	// Debounce timer for batch mode
+	debounceTimer *time.Timer
+	debounceMutex sync.Mutex
 }
 
 // PeerInfo contains information about a connected peer
@@ -85,6 +93,13 @@ type PeerInfo struct {
 
 // NewP2PNode creates a new P2P node
 func NewP2PNode(ctx context.Context, listenPort int, agentID string) (*P2PNode, error) {
+	// Use default realtime mode
+	defaultMode, _ := modes.GetModeConfig(modes.RealtimeMode)
+	return NewP2PNodeWithMode(ctx, listenPort, agentID, defaultMode)
+}
+
+// NewP2PNodeWithMode creates a new P2P node with a specific mode
+func NewP2PNodeWithMode(ctx context.Context, listenPort int, agentID string, modeConfig modes.ModeConfig) (*P2PNode, error) {
 	// Create context with cancellation
 	nodeCtx, cancel := context.WithCancel(ctx)
 
@@ -138,6 +153,7 @@ func NewP2PNode(ctx context.Context, listenPort int, agentID string) (*P2PNode, 
 		incomingWrites:  make(map[string]bool),
 		ignoreMatcher:   nil, // Will be set via SetIgnoreMatcher
 		analyticsEngine: analyticsEngine,
+		modeConfig:      &modeConfig,
 	}
 
 	// Set up libp2p host handlers
@@ -536,6 +552,29 @@ skipFileSync:
 
 // BroadcastChange broadcasts a file change to all peers
 func (n *P2PNode) BroadcastChange(sessionID, agentID string, event *collab.ChangeEvent) error {
+	// Check if we can send changes based on mode
+	if n.modeConfig != nil && !n.modeConfig.CanSendChanges {
+		log.Printf("Mode %s does not allow sending changes", n.modeConfig.Mode)
+		return nil
+	}
+
+	// Check if we're in read-only mode
+	if n.modeConfig != nil && n.modeConfig.ReadOnly {
+		log.Printf("Read-only mode active, skipping broadcast")
+		return nil
+	}
+
+	// Handle debouncing for batch mode
+	if n.modeConfig != nil && n.modeConfig.DebounceInterval > 0 {
+		return n.debouncedBroadcast(sessionID, agentID, event)
+	}
+
+	// Immediate broadcast for realtime mode
+	return n.sendChangeImmediate(sessionID, agentID, event)
+}
+
+// sendChangeImmediate sends a change immediately
+func (n *P2PNode) sendChangeImmediate(sessionID, agentID string, event *collab.ChangeEvent) error {
 	// Serialize the change event
 	payload, err := event.ToJSON()
 	if err != nil {
@@ -552,6 +591,26 @@ func (n *P2PNode) BroadcastChange(sessionID, agentID string, event *collab.Chang
 
 	// Send message
 	return n.sendMessage(msg)
+}
+
+// debouncedBroadcast handles debounced broadcasting for batch mode
+func (n *P2PNode) debouncedBroadcast(sessionID, agentID string, event *collab.ChangeEvent) error {
+	n.debounceMutex.Lock()
+	defer n.debounceMutex.Unlock()
+
+	// Cancel existing timer if any
+	if n.debounceTimer != nil {
+		n.debounceTimer.Stop()
+	}
+
+	// Create new timer
+	n.debounceTimer = time.AfterFunc(n.modeConfig.DebounceInterval, func() {
+		if err := n.sendChangeImmediate(sessionID, agentID, event); err != nil {
+			log.Printf("Failed to send debounced change: %v", err)
+		}
+	})
+
+	return nil
 }
 
 // SetOnPeerConnected sets the callback for when a peer connects
@@ -765,6 +824,12 @@ func (n *P2PNode) handleJoin(msg *Message) error {
 }
 
 func (n *P2PNode) handleChange(msg *Message) error {
+	// Check if we can receive changes based on mode
+	if n.modeConfig != nil && !n.modeConfig.CanReceiveChanges {
+		log.Printf("Mode %s does not allow receiving changes", n.modeConfig.Mode)
+		return nil
+	}
+
 	// Deserialize change event
 	var event collab.ChangeEvent
 	if err := json.Unmarshal(msg.Payload, &event); err != nil {
@@ -772,6 +837,13 @@ func (n *P2PNode) handleChange(msg *Message) error {
 	}
 
 	log.Printf("Received change for file: %s from peer %s", event.FilePath, msg.AgentID)
+
+	// If in review mode, queue for approval instead of applying immediately
+	if n.modeConfig != nil && n.modeConfig.RequireApproval {
+		log.Printf("Review mode active - change queued for approval")
+		// TODO: Implement approval queue
+		return nil
+	}
 
 	// Record analytics: file change from peer
 	if n.analyticsEngine != nil && event.FilePath != "" {
@@ -1323,15 +1395,43 @@ func (n *P2PNode) DetectAnomalies() []analytics.Anomaly {
 	return n.analyticsEngine.DetectAnomalies()
 }
 
-// shouldIgnoreFile checks if a file should be ignored based on patterns
-//func (n *P2PNode) shouldIgnoreFile(filePath string) bool {
-//	if n.ignoreMatcher == nil {
-//		return false
-//	}
-//
-//	// Check if it's a directory
-//	info, err := os.Stat(filePath)
-//	isDir := err == nil && info.IsDir()
-//
-//	return n.ignoreMatcher.ShouldIgnore(filePath, isDir)
-//}
+// GetModeConfig returns the current mode configuration
+func (n *P2PNode) GetModeConfig() *modes.ModeConfig {
+	return n.modeConfig
+}
+
+// SetModeConfig updates the mode configuration
+func (n *P2PNode) SetModeConfig(config modes.ModeConfig) error {
+	if err := config.ValidateConfig(); err != nil {
+		return fmt.Errorf("invalid mode config: %w", err)
+	}
+	n.modeConfig = &config
+	log.Printf("Updated mode to: %s", config.Mode)
+	return nil
+}
+
+// ShouldSyncFile checks if a file should be synced based on mode configuration
+func (n *P2PNode) ShouldSyncFile(filePath string) bool {
+	if n.modeConfig == nil {
+		return true
+	}
+
+	// Check selective paths
+	if n.modeConfig.Mode == modes.SelectiveMode && len(n.modeConfig.SelectivePaths) > 0 {
+		for _, path := range n.modeConfig.SelectivePaths {
+			if filepath.HasPrefix(filePath, path) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Check exclude paths
+	for _, path := range n.modeConfig.ExcludePaths {
+		if filepath.HasPrefix(filePath, path) {
+			return false
+		}
+	}
+
+	return true
+}

@@ -414,7 +414,6 @@ func (t *AccessTracker) Load() error {
 // CleanupOldData removes records older than the specified duration
 func (t *AccessTracker) CleanupOldData(maxAge time.Duration) error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	cutoff := time.Now().Add(-maxAge)
 
@@ -434,5 +433,25 @@ func (t *AccessTracker) CleanupOldData(maxAge time.Duration) error {
 		t.updateFileStats(record)
 	}
 
-	return t.Save()
+	// Prepare data for saving while holding the lock
+	data := struct {
+		Records   []AccessRecord              `json:"records"`
+		FileStats map[string]*FileStatistics  `json:"file_stats"`
+		StartTime time.Time                   `json:"start_time"`
+	}{
+		Records:   t.records,
+		FileStats: t.fileStats,
+		StartTime: t.startTime,
+	}
+
+	// Release lock before file I/O
+	t.mu.Unlock()
+
+	// Save to disk without holding the lock
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(t.storagePath, jsonData, 0644)
 }

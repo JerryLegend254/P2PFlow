@@ -60,6 +60,9 @@ func (app *application) mount() {
 
 	// analytics commands
 	rootCmd.AddCommand(app.newAnalyticsCommand())
+
+	// modes command
+	rootCmd.AddCommand(app.newModesCommand())
 }
 
 func (app *application) run(rootCmd *cobra.Command) error {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/JerryLegend254/p2pflow/internal/crdt"
 	"github.com/JerryLegend254/p2pflow/internal/ignore"
+	"github.com/JerryLegend254/p2pflow/internal/modes"
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -64,10 +65,20 @@ type CRDTNode struct {
 
 	// Anti-entropy ticker
 	antiEntropyTicker *time.Ticker
+
+	// Mode configuration
+	modeConfig *modes.ModeConfig
 }
 
 // NewCRDTNode creates a new CRDT-aware P2P node
 func NewCRDTNode(ctx context.Context, listenPort int, agentID string, crdtEngine *crdt.CRDTEngine) (*CRDTNode, error) {
+	// Use default conflict-free mode for CRDT
+	defaultMode, _ := modes.GetModeConfig(modes.ConflictFreeMode)
+	return NewCRDTNodeWithMode(ctx, listenPort, agentID, crdtEngine, defaultMode)
+}
+
+// NewCRDTNodeWithMode creates a new CRDT-aware P2P node with a specific mode
+func NewCRDTNodeWithMode(ctx context.Context, listenPort int, agentID string, crdtEngine *crdt.CRDTEngine, modeConfig modes.ModeConfig) (*CRDTNode, error) {
 	// Create context with cancellation
 	nodeCtx, cancel := context.WithCancel(ctx)
 
@@ -111,6 +122,7 @@ func NewCRDTNode(ctx context.Context, listenPort int, agentID string, crdtEngine
 		ctx:              nodeCtx,
 		cancel:           cancel,
 		operationBuffers: make(map[string]*crdt.OperationBuffer),
+		modeConfig:       &modeConfig,
 	}
 
 	log.Printf("CRDT Node created with ID: %s", nodeID)

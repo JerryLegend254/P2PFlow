@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JerryLegend254/p2pflow/internal/crdt"
+	"github.com/JerryLegend254/p2pflow/internal/modes"
 	"github.com/JerryLegend254/p2pflow/internal/network"
 	"github.com/JerryLegend254/p2pflow/internal/watcher"
 	"github.com/briandowns/spinner"
@@ -26,6 +27,7 @@ import (
 func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 	var filePath string
 	var port int
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "serve [file]",
@@ -63,6 +65,20 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 				agentName = cfg.Auth.Username
 			}
 
+			// Get mode configuration (default to conflict-free for CRDT)
+			var modeConfig modes.ModeConfig
+			var modeErr error
+			if modeFlag == "" || modeFlag == "conflict-free" {
+				modeConfig, _ = modes.GetModeConfig(modes.ConflictFreeMode)
+			} else {
+				modeConfig, modeErr = parseModeFlag(modeFlag)
+				if modeErr != nil {
+					return fmt.Errorf("invalid mode: %w", modeErr)
+				}
+				// Force CRDT conflict strategy for CRDT mode
+				modeConfig.ConflictStrategy = modes.ConflictCRDT
+			}
+
 			cyan := color.New(color.FgCyan).SprintFunc()
 			green := color.New(color.FgGreen).SprintFunc()
 			yellow := color.New(color.FgYellow).SprintFunc()
@@ -71,7 +87,10 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			app.console.Infof("Session ID: %s", cyan(sessionID))
 			app.console.Infof("Path: %s", yellow(filePath))
 			app.console.Infof("Agent: %s", green(agentName))
-			app.console.Infof("Mode: %s", green("CRDT (Eventual Consistency)"))
+			app.console.Infof("Mode: %s", green(string(modeConfig.Mode)))
+			if modeConfig.Mode != modes.ConflictFreeMode {
+				app.console.Infof("  ℹ  %s", modes.GetModeDescription(modeConfig.Mode))
+			}
 
 			// Create context
 			ctx, cancel := context.WithCancel(context.Background())
@@ -83,8 +102,8 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 			// Create CRDT session
 			session := crdtEngine.CreateSession(sessionID, filePath, agentID)
 
-			// Create P2P node with CRDT support (pass the CRDT engine)
-			node, err := network.NewCRDTNode(ctx, port, agentID, crdtEngine)
+			// Create P2P node with CRDT support and mode (pass the CRDT engine)
+			node, err := network.NewCRDTNodeWithMode(ctx, port, agentID, crdtEngine, modeConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create CRDT node: %w", err)
 			}
@@ -261,6 +280,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "File or directory path to serve")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVarP(&modeFlag, "mode", "m", "conflict-free", "Collaboration mode: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective")
 
 	return cmd
 }
@@ -269,6 +289,7 @@ func (app *application) newCollabCRDTServeCommand() *cobra.Command {
 func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 	var filePath string
 	var port int
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "join <session-id>",
@@ -300,6 +321,20 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				agentName = cfg.Auth.Username
 			}
 
+			// Get mode configuration (default to conflict-free for CRDT)
+			var modeConfig modes.ModeConfig
+			var modeErr error
+			if modeFlag == "" || modeFlag == "conflict-free" {
+				modeConfig, _ = modes.GetModeConfig(modes.ConflictFreeMode)
+			} else {
+				modeConfig, modeErr = parseModeFlag(modeFlag)
+				if modeErr != nil {
+					return fmt.Errorf("invalid mode: %w", modeErr)
+				}
+				// Force CRDT conflict strategy for CRDT mode
+				modeConfig.ConflictStrategy = modes.ConflictCRDT
+			}
+
 			cyan := color.New(color.FgCyan).SprintFunc()
 			green := color.New(color.FgGreen).SprintFunc()
 			yellow := color.New(color.FgYellow).SprintFunc()
@@ -308,6 +343,10 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 			app.console.Infof("Session ID: %s", cyan(sessionID))
 			app.console.Infof("Path: %s", yellow(filePath))
 			app.console.Infof("Agent: %s", green(agentName))
+			app.console.Infof("Mode: %s", green(string(modeConfig.Mode)))
+			if modeConfig.Mode != modes.ConflictFreeMode {
+				app.console.Infof("  ℹ  %s", modes.GetModeDescription(modeConfig.Mode))
+			}
 
 			// Create context
 			ctx, cancel := context.WithCancel(context.Background())
@@ -324,8 +363,8 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 				crdtEngine.ImportSession(existingSession)
 			}
 
-			// Create P2P node (pass the CRDT engine)
-			node, err := network.NewCRDTNode(ctx, port, agentID, crdtEngine)
+			// Create P2P node with mode (pass the CRDT engine)
+			node, err := network.NewCRDTNodeWithMode(ctx, port, agentID, crdtEngine, modeConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create CRDT node: %w", err)
 			}
@@ -522,6 +561,7 @@ func (app *application) newCollabCRDTJoinCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Local directory path to sync files to")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVarP(&modeFlag, "mode", "m", "conflict-free", "Collaboration mode: realtime, batch, manual, review, observer, offline, leader, follower, conflict-free, selective")
 
 	return cmd
 }
