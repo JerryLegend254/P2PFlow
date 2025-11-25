@@ -11,24 +11,24 @@ import (
 
 // AnalyticsEngine is the main orchestrator for all analytics functionality
 type AnalyticsEngine struct {
-	tracker      *AccessTracker
-	predictor    *Predictor
-	prefetch     *PrefetchEngine
-	anomaly      *AnomalyDetector
-	bandwidth    *BandwidthAllocator
-	storagePath  string
-	mu           sync.RWMutex
-	enabled      bool
+	tracker     *AccessTracker
+	predictor   *Predictor
+	prefetch    *PrefetchEngine
+	anomaly     *AnomalyDetector
+	bandwidth   *BandwidthAllocator
+	storagePath string
+	mu          sync.RWMutex
+	enabled     bool
 }
 
 // Config holds configuration for the analytics engine
 type Config struct {
-	Enabled           bool
-	StoragePath       string
-	PrefetchEnabled   bool
-	AnomalyDetection  bool
-	MaxHistoryDays    int // How many days of history to keep
-	MinConfidence     float64 // Minimum confidence for prefetch suggestions
+	Enabled          bool
+	StoragePath      string
+	PrefetchEnabled  bool
+	AnomalyDetection bool
+	MaxHistoryDays   int     // How many days of history to keep
+	MinConfidence    float64 // Minimum confidence for prefetch suggestions
 }
 
 // DefaultConfig returns a default configuration

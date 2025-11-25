@@ -8,94 +8,94 @@ import (
 
 func TestIgnoreMatcher_ShouldIgnore(t *testing.T) {
 	tests := []struct {
-		name      string
-		patterns  []string
-		path      string
-		isDir     bool
+		name       string
+		patterns   []string
+		path       string
+		isDir      bool
 		wantIgnore bool
 	}{
 		{
-			name:      "ignore .git directory",
-			patterns:  []string{".git/"},
-			path:      ".git",
-			isDir:     true,
+			name:       "ignore .git directory",
+			patterns:   []string{".git/"},
+			path:       ".git",
+			isDir:      true,
 			wantIgnore: true,
 		},
 		{
-			name:      "ignore node_modules directory",
-			patterns:  []string{"node_modules/"},
-			path:      "node_modules",
-			isDir:     true,
+			name:       "ignore node_modules directory",
+			patterns:   []string{"node_modules/"},
+			path:       "node_modules",
+			isDir:      true,
 			wantIgnore: true,
 		},
 		{
-			name:      "ignore .env file",
-			patterns:  []string{".env"},
-			path:      ".env",
-			isDir:     false,
+			name:       "ignore .env file",
+			patterns:   []string{".env"},
+			path:       ".env",
+			isDir:      false,
 			wantIgnore: true,
 		},
 		{
-			name:      "ignore all log files",
-			patterns:  []string{"*.log"},
-			path:      "app.log",
-			isDir:     false,
+			name:       "ignore all log files",
+			patterns:   []string{"*.log"},
+			path:       "app.log",
+			isDir:      false,
 			wantIgnore: true,
 		},
 		{
-			name:      "don't ignore regular file",
-			patterns:  []string{"*.log"},
-			path:      "main.go",
-			isDir:     false,
+			name:       "don't ignore regular file",
+			patterns:   []string{"*.log"},
+			path:       "main.go",
+			isDir:      false,
 			wantIgnore: false,
 		},
 		{
-			name:      "ignore nested path with wildcard",
-			patterns:  []string{"*.log"},
-			path:      "logs/app.log",
-			isDir:     false,
+			name:       "ignore nested path with wildcard",
+			patterns:   []string{"*.log"},
+			path:       "logs/app.log",
+			isDir:      false,
 			wantIgnore: true,
 		},
 		{
-			name:      "negation pattern",
-			patterns:  []string{"*.log", "!important.log"},
-			path:      "important.log",
-			isDir:     false,
+			name:       "negation pattern",
+			patterns:   []string{"*.log", "!important.log"},
+			path:       "important.log",
+			isDir:      false,
 			wantIgnore: false,
 		},
 		{
-			name:      "negation doesn't apply to other files",
-			patterns:  []string{"*.log", "!important.log"},
-			path:      "debug.log",
-			isDir:     false,
+			name:       "negation doesn't apply to other files",
+			patterns:   []string{"*.log", "!important.log"},
+			path:       "debug.log",
+			isDir:      false,
 			wantIgnore: true,
 		},
 		{
-			name:      "ignore directory only pattern on file",
-			patterns:  []string{"test/"},
-			path:      "test",
-			isDir:     false,
+			name:       "ignore directory only pattern on file",
+			patterns:   []string{"test/"},
+			path:       "test",
+			isDir:      false,
 			wantIgnore: false,
 		},
 		{
-			name:      "ignore directory only pattern on dir",
-			patterns:  []string{"test/"},
-			path:      "test",
-			isDir:     true,
+			name:       "ignore directory only pattern on dir",
+			patterns:   []string{"test/"},
+			path:       "test",
+			isDir:      true,
 			wantIgnore: true,
 		},
 		{
-			name:      "path-specific pattern",
-			patterns:  []string{"src/test/"},
-			path:      "src/test",
-			isDir:     true,
+			name:       "path-specific pattern",
+			patterns:   []string{"src/test/"},
+			path:       "src/test",
+			isDir:      true,
 			wantIgnore: true,
 		},
 		{
-			name:      "path-specific pattern doesn't match different path",
-			patterns:  []string{"src/test/"},
-			path:      "lib/test",
-			isDir:     true,
+			name:       "path-specific pattern doesn't match different path",
+			patterns:   []string{"src/test/"},
+			path:       "lib/test",
+			isDir:      true,
 			wantIgnore: false,
 		},
 	}
@@ -153,8 +153,8 @@ node_modules/
 
 	// Test that patterns work
 	tests := []struct {
-		path      string
-		isDir     bool
+		path       string
+		isDir      bool
 		wantIgnore bool
 	}{
 		{"app.log", false, true},
@@ -178,8 +178,8 @@ func TestIgnoreMatcher_AddDefaultPatterns(t *testing.T) {
 
 	// Test some default patterns
 	tests := []struct {
-		path      string
-		isDir     bool
+		path       string
+		isDir      bool
 		wantIgnore bool
 	}{
 		{".git", true, true},
@@ -216,7 +216,7 @@ func TestIgnoreMatcher_RelativePaths(t *testing.T) {
 	im.AddPattern("*.log")
 
 	tests := []struct {
-		path      string
+		path       string
 		wantIgnore bool
 	}{
 		{"app.log", true},

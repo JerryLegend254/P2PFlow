@@ -20,7 +20,7 @@ const (
 // BandwidthAllocation represents bandwidth allocation for a file
 type BandwidthAllocation struct {
 	FilePath       string       `json:"file_path"`
-	Importance     float64      `json:"importance"`      // 0.0 to 1.0
+	Importance     float64      `json:"importance"` // 0.0 to 1.0
 	Priority       FilePriority `json:"priority"`
 	AllocatedBytes int64        `json:"allocated_bytes"` // Bytes per second
 	Reason         string       `json:"reason"`
@@ -29,10 +29,10 @@ type BandwidthAllocation struct {
 
 // BandwidthAllocator intelligently allocates bandwidth based on file importance
 type BandwidthAllocator struct {
-	tracker         *AccessTracker
-	totalBandwidth  int64 // Total available bandwidth in bytes/second
-	allocations     map[string]*BandwidthAllocation
-	decayFactor     float64 // How quickly importance decays over time
+	tracker        *AccessTracker
+	totalBandwidth int64 // Total available bandwidth in bytes/second
+	allocations    map[string]*BandwidthAllocation
+	decayFactor    float64 // How quickly importance decays over time
 }
 
 // NewBandwidthAllocator creates a new bandwidth allocator

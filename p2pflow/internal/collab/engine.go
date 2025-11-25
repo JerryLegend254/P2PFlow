@@ -23,12 +23,12 @@ type FileInfo struct {
 // Session represents a collaboration session
 type Session struct {
 	ID        string               `json:"id"`
-	FilePath  string               `json:"file_path"`  // Deprecated: kept for backward compatibility
-	RootPath  string               `json:"root_path"`  // Base directory for the session
-	Files     map[string]*FileInfo `json:"files"`      // Map of relative path -> FileInfo
+	FilePath  string               `json:"file_path"` // Deprecated: kept for backward compatibility
+	RootPath  string               `json:"root_path"` // Base directory for the session
+	Files     map[string]*FileInfo `json:"files"`     // Map of relative path -> FileInfo
 	CreatedAt time.Time            `json:"created_at"`
 	Agents    map[string]*Agent    `json:"agents"`
-	Content   string               `json:"content"`    // Deprecated: kept for backward compatibility
+	Content   string               `json:"content"` // Deprecated: kept for backward compatibility
 	Version   int                  `json:"version"`
 }
 
@@ -44,10 +44,10 @@ type Agent struct {
 type ChangeEvent struct {
 	SessionID   string    `json:"session_id"`
 	AgentID     string    `json:"agent_id"`
-	FilePath    string    `json:"file_path"`   // Path to the file being changed
+	FilePath    string    `json:"file_path"` // Path to the file being changed
 	Timestamp   time.Time `json:"timestamp"`
 	Patch       string    `json:"patch"`
-	Version     int       `json:"version"`     // Target version after applying
+	Version     int       `json:"version"`      // Target version after applying
 	BaseVersion int       `json:"base_version"` // Version the patch was created from
 }
 
@@ -75,12 +75,12 @@ func (ce *CollaborationEngine) CreateSession(sessionID, filePath, content string
 
 	session := &Session{
 		ID:        sessionID,
-		FilePath:  filePath,  // Backward compatibility
+		FilePath:  filePath, // Backward compatibility
 		RootPath:  "",
 		Files:     make(map[string]*FileInfo),
 		CreatedAt: time.Now(),
 		Agents:    make(map[string]*Agent),
-		Content:   content,   // Backward compatibility
+		Content:   content, // Backward compatibility
 		Version:   0,
 	}
 

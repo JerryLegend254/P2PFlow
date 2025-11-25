@@ -17,14 +17,14 @@ import (
 
 // CRDTWatcher watches files and generates CRDT operations
 type CRDTWatcher struct {
-	path      string
-	watcher   *fsnotify.Watcher
-	OnChange  func(filePath string, op *crdt.Operation) // Callback when operation is generated
+	path     string
+	watcher  *fsnotify.Watcher
+	OnChange func(filePath string, op *crdt.Operation) // Callback when operation is generated
 
-	CRDTEngine  *crdt.CRDTEngine
-	SessionID   string
-	AgentID     string
-	fileStates  map[string]*FileState // Track state per file
+	CRDTEngine *crdt.CRDTEngine
+	SessionID  string
+	AgentID    string
+	fileStates map[string]*FileState // Track state per file
 
 	// Track incoming writes to prevent loops
 	incomingWrites      map[string]bool
