@@ -30,29 +30,29 @@ type AccessRecord struct {
 
 // FileStatistics holds detailed statistics for a specific file
 type FileStatistics struct {
-	FilePath         string                 `json:"file_path"`
-	TotalAccesses    int                    `json:"total_accesses"`
-	ReadCount        int                    `json:"read_count"`
-	WriteCount       int                    `json:"write_count"`
-	CreateCount      int                    `json:"create_count"`
-	DeleteCount      int                    `json:"delete_count"`
-	SyncCount        int                    `json:"sync_count"`
-	FirstAccess      time.Time              `json:"first_access"`
-	LastAccess       time.Time              `json:"last_access"`
-	TotalBytes       int64                  `json:"total_bytes"`
-	AccessHistory    []AccessRecord         `json:"access_history"`
-	HourlyPattern    map[int]int            `json:"hourly_pattern"`    // Hour of day (0-23) -> count
-	DayOfWeekPattern map[time.Weekday]int   `json:"day_of_week_pattern"` // Day of week -> count
-	PeerAccesses     map[string]int         `json:"peer_accesses"`     // Peer ID -> count
+	FilePath         string               `json:"file_path"`
+	TotalAccesses    int                  `json:"total_accesses"`
+	ReadCount        int                  `json:"read_count"`
+	WriteCount       int                  `json:"write_count"`
+	CreateCount      int                  `json:"create_count"`
+	DeleteCount      int                  `json:"delete_count"`
+	SyncCount        int                  `json:"sync_count"`
+	FirstAccess      time.Time            `json:"first_access"`
+	LastAccess       time.Time            `json:"last_access"`
+	TotalBytes       int64                `json:"total_bytes"`
+	AccessHistory    []AccessRecord       `json:"access_history"`
+	HourlyPattern    map[int]int          `json:"hourly_pattern"`      // Hour of day (0-23) -> count
+	DayOfWeekPattern map[time.Weekday]int `json:"day_of_week_pattern"` // Day of week -> count
+	PeerAccesses     map[string]int       `json:"peer_accesses"`       // Peer ID -> count
 }
 
 // AccessTracker tracks file access patterns
 type AccessTracker struct {
-	records      []AccessRecord
-	fileStats    map[string]*FileStatistics
-	storagePath  string
-	mu           sync.RWMutex
-	startTime    time.Time
+	records     []AccessRecord
+	fileStats   map[string]*FileStatistics
+	storagePath string
+	mu          sync.RWMutex
+	startTime   time.Time
 }
 
 // NewAccessTracker creates a new access tracker
@@ -367,9 +367,9 @@ func (t *AccessTracker) Save() error {
 	defer t.mu.RUnlock()
 
 	data := struct {
-		Records   []AccessRecord              `json:"records"`
-		FileStats map[string]*FileStatistics  `json:"file_stats"`
-		StartTime time.Time                   `json:"start_time"`
+		Records   []AccessRecord             `json:"records"`
+		FileStats map[string]*FileStatistics `json:"file_stats"`
+		StartTime time.Time                  `json:"start_time"`
 	}{
 		Records:   t.records,
 		FileStats: t.fileStats,
@@ -392,9 +392,9 @@ func (t *AccessTracker) Load() error {
 	}
 
 	var loaded struct {
-		Records   []AccessRecord              `json:"records"`
-		FileStats map[string]*FileStatistics  `json:"file_stats"`
-		StartTime time.Time                   `json:"start_time"`
+		Records   []AccessRecord             `json:"records"`
+		FileStats map[string]*FileStatistics `json:"file_stats"`
+		StartTime time.Time                  `json:"start_time"`
 	}
 
 	if err := json.Unmarshal(data, &loaded); err != nil {
@@ -435,9 +435,9 @@ func (t *AccessTracker) CleanupOldData(maxAge time.Duration) error {
 
 	// Prepare data for saving while holding the lock
 	data := struct {
-		Records   []AccessRecord              `json:"records"`
-		FileStats map[string]*FileStatistics  `json:"file_stats"`
-		StartTime time.Time                   `json:"start_time"`
+		Records   []AccessRecord             `json:"records"`
+		FileStats map[string]*FileStatistics `json:"file_stats"`
+		StartTime time.Time                  `json:"start_time"`
 	}{
 		Records:   t.records,
 		FileStats: t.fileStats,

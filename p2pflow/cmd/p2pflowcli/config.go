@@ -17,9 +17,9 @@ type appConfig struct {
 		Provider  string `mapstructure:"provider"`
 	} `mapstructure:"auth"`
 	Ignore struct {
-		Patterns       []string `mapstructure:"patterns"`
-		UseDefaults    bool     `mapstructure:"use_defaults"`
-		UseP2PIgnore   bool     `mapstructure:"use_p2pignore"`
+		Patterns     []string `mapstructure:"patterns"`
+		UseDefaults  bool     `mapstructure:"use_defaults"`
+		UseP2PIgnore bool     `mapstructure:"use_p2pignore"`
 	} `mapstructure:"ignore"`
 }
 

@@ -8,11 +8,11 @@ import (
 
 // PrefetchSuggestion represents a file that should be prefetched
 type PrefetchSuggestion struct {
-	FilePath   string    `json:"file_path"`
-	Priority   float64   `json:"priority"`   // 0.0 to 1.0, higher = more important
-	Confidence float64   `json:"confidence"` // 0.0 to 1.0, how sure we are
-	Reason     string    `json:"reason"`
-	Timestamp  time.Time `json:"timestamp"`
+	FilePath            string    `json:"file_path"`
+	Priority            float64   `json:"priority"`   // 0.0 to 1.0, higher = more important
+	Confidence          float64   `json:"confidence"` // 0.0 to 1.0, how sure we are
+	Reason              string    `json:"reason"`
+	Timestamp           time.Time `json:"timestamp"`
 	EstimatedAccessTime time.Time `json:"estimated_access_time,omitempty"`
 }
 

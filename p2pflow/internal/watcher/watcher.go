@@ -26,13 +26,13 @@ type Watcher struct {
 	watcher  *fsnotify.Watcher
 	last     string
 	Dmp      *dmp.DiffMatchPatch
-	OnChange func(patch string, filePath string)  // Updated to include filePath
+	OnChange func(patch string, filePath string) // Updated to include filePath
 
 	CollabEngine   *collab.CollaborationEngine
 	SessionManager *collab.SessionManager
 	SessionID      string
 	AgentID        string
-	fileContents   map[string]string  // Track content per file for multi-file watching
+	fileContents   map[string]string // Track content per file for multi-file watching
 
 	// Callback to check if a file write is from an incoming change
 	IsIncomingWrite func(filePath string) bool
@@ -263,7 +263,7 @@ func (w *Watcher) handleFileWrite(filePath string) {
 	// Get previous content for this file
 	prev, exists := w.fileContents[filePath]
 	if !exists {
-		prev = w.last  // Fallback to single-file mode
+		prev = w.last // Fallback to single-file mode
 	}
 
 	// Skip if content hasn't changed
@@ -277,10 +277,10 @@ func (w *Watcher) handleFileWrite(filePath string) {
 
 	// Update stored content
 	w.fileContents[filePath] = cur
-	w.last = cur  // For backward compatibility
+	w.last = cur // For backward compatibility
 
 	if w.OnChange != nil {
-		w.OnChange(patch, filePath)  // Pass file path
+		w.OnChange(patch, filePath) // Pass file path
 	}
 
 	fmt.Printf("Generated patch for %s: %s\n", filePath, patch)
@@ -331,7 +331,7 @@ func (w *Watcher) handleFileCreate(filePath string) {
 		w.fileContents[filePath] = content
 
 		if w.OnChange != nil {
-			w.OnChange(patch, filePath)  // Pass file path
+			w.OnChange(patch, filePath) // Pass file path
 		}
 
 		fmt.Printf("Generated patch for new file %s: %s\n", filePath, patch)

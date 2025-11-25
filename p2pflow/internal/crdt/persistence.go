@@ -182,9 +182,9 @@ func (sp *SessionPersistence) ListSessions() ([]string, error) {
 
 // SaveSnapshot saves a complete snapshot of a session
 type Snapshot struct {
-	Session    *CRDTSession  `json:"session"`
-	Operations []*Operation  `json:"operations"`
-	CreatedAt  time.Time     `json:"created_at"`
+	Session    *CRDTSession `json:"session"`
+	Operations []*Operation `json:"operations"`
+	CreatedAt  time.Time    `json:"created_at"`
 }
 
 // CreateSnapshot creates a snapshot of a session

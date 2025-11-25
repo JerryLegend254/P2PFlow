@@ -125,7 +125,7 @@ func (p *Predictor) predictByTimePattern() []Prediction {
 
 		// If > 20% of accesses happen at this hour, it's a strong pattern
 		if hourProportion > 0.2 {
-			confidence := math.Min(hourProportion * 2, 0.95)
+			confidence := math.Min(hourProportion*2, 0.95)
 
 			predictions = append(predictions, Prediction{
 				FilePath:   summary.FilePath,
@@ -316,7 +316,7 @@ func (p *Predictor) PredictByDayOfWeek(dayOfWeek time.Weekday, limit int) []Pred
 
 		// If > 15% of accesses happen on this day, it's a pattern
 		if dayProportion > 0.15 {
-			confidence := math.Min(dayProportion * 3, 0.9)
+			confidence := math.Min(dayProportion*3, 0.9)
 
 			predictions = append(predictions, Prediction{
 				FilePath:   summary.FilePath,

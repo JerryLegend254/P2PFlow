@@ -1,0 +1,234 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# Set default working directory for all jobs
+defaults:
+  run:
+    working-directory: p2pflow
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run tests
+        run: |
+          go test -v -race ./...
+
+      - name: Run staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+  build:
+    name: Build Binaries
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Get version
+        id: version
+        working-directory: .
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          BINARY_NAME=p2pflow-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="${BINARY_NAME}.exe"
+          fi
+
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          LDFLAGS="-s -w \
+            -X 'main.version=${VERSION}' \
+            -X 'main.commit=${COMMIT}' \
+            -X 'main.buildDate=${BUILD_DATE}'"
+
+          go build -ldflags "${LDFLAGS}" -o "${BINARY_NAME}" ./cmd/p2pflowcli/*.go
+
+          echo "Built: ${BINARY_NAME}"
+          ls -lh "${BINARY_NAME}"
+
+      - name: Create archive
+        id: archive
+        run: |
+          BINARY_NAME=p2pflow-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="${BINARY_NAME}.exe"
+            ARCHIVE_NAME="p2pflow-${{ matrix.goos }}-${{ matrix.goarch }}.zip"
+            zip "${ARCHIVE_NAME}" "${BINARY_NAME}"
+          else
+            ARCHIVE_NAME="p2pflow-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+            tar -czf "${ARCHIVE_NAME}" "${BINARY_NAME}"
+          fi
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+          echo "Created: ${ARCHIVE_NAME}"
+          ls -lh "${ARCHIVE_NAME}"
+
+      - name: Generate checksum
+        run: |
+          ARCHIVE_NAME="${{ steps.archive.outputs.ARCHIVE_NAME }}"
+          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          cat "${ARCHIVE_NAME}.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2pflow-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            p2pflow/${{ steps.archive.outputs.ARCHIVE_NAME }}
+            p2pflow/${{ steps.archive.outputs.ARCHIVE_NAME }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums file
+        working-directory: .
+        run: |
+          cd artifacts
+          cat *.sha256 > checksums.txt
+          rm *.sha256
+          echo "Generated checksums.txt:"
+          cat checksums.txt
+
+      - name: Get version
+        id: version
+        working-directory: .
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        working-directory: .
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release"
+            CHANGELOG="Initial release of P2PFlow"
+          else
+            echo "Generating changelog from ${PREV_TAG} to HEAD"
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Save to file
+          echo "${CHANGELOG}" > changelog.txt
+
+          # Also set as output (escaped)
+          {
+            echo 'CHANGELOG<<EOF'
+            echo "${CHANGELOG}"
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: P2PFlow ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## P2PFlow ${{ steps.version.outputs.VERSION }}
+
+            ### Installation
+
+            Download the appropriate binary for your platform below.
+
+            **Verify the checksum:**
+            ```bash
+            shasum -a 256 -c checksums.txt
+            ```
+
+            ### Changes
+
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ### Platform Support
+
+            - **macOS (Intel)**: `p2pflow-darwin-amd64.tar.gz`
+            - **macOS (Apple Silicon)**: `p2pflow-darwin-arm64.tar.gz`
+            - **Linux (x86_64)**: `p2pflow-linux-amd64.tar.gz`
+            - **Linux (ARM64)**: `p2pflow-linux-arm64.tar.gz`
+            - **Windows (64-bit)**: `p2pflow-windows-amd64.zip`
+
+            ### Documentation
+
+            - [README](https://github.com/JerryLegend254/P2PFlow#readme)
+            - [Collaboration Modes](https://github.com/JerryLegend254/P2PFlow/blob/main/p2pflow/docs/MODES.md)
+
+            ---
+
+            **Full Changelog**: https://github.com/JerryLegend254/P2PFlow/compare/${{ github.event.before }}...${{ github.sha }}
+          files: |
+            artifacts/*
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update release notes
+        working-directory: .
+        run: |
+          echo "✅ Release created successfully!"
+          echo "View at: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.VERSION }}"

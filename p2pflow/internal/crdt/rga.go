@@ -19,7 +19,7 @@ const (
 // ElementID uniquely identifies an element in the RGA
 // Elements are ordered by (Timestamp, ReplicaID) for deterministic conflict resolution
 type ElementID struct {
-	Timestamp int64  `json:"timestamp"` // Lamport timestamp
+	Timestamp int64  `json:"timestamp"`  // Lamport timestamp
 	ReplicaID string `json:"replica_id"` // Unique node/agent identifier
 }
 
@@ -53,20 +53,20 @@ type Element struct {
 type Operation struct {
 	Type        OperationType `json:"type"`
 	ElementID   ElementID     `json:"element_id"`
-	Content     string        `json:"content,omitempty"`     // For insert operations
-	PrevID      *ElementID    `json:"prev_id,omitempty"`     // Insert after this element
-	VectorClock *VectorClock  `json:"vector_clock"`          // Causality tracking
-	ReplicaID   string        `json:"replica_id"`            // Node that created this op
-	Timestamp   int64         `json:"timestamp"`             // Operation timestamp
+	Content     string        `json:"content,omitempty"` // For insert operations
+	PrevID      *ElementID    `json:"prev_id,omitempty"` // Insert after this element
+	VectorClock *VectorClock  `json:"vector_clock"`      // Causality tracking
+	ReplicaID   string        `json:"replica_id"`        // Node that created this op
+	Timestamp   int64         `json:"timestamp"`         // Operation timestamp
 }
 
 // RGADocument represents a line-based CRDT document using RGA algorithm
 type RGADocument struct {
-	Elements    []*Element      `json:"elements"`     // Ordered list of elements
-	ReplicaID   string          `json:"replica_id"`   // This node's ID
-	Clock       *VectorClock    `json:"clock"`        // Vector clock for causality
-	Lamport     int64           `json:"lamport"`      // Lamport clock for element IDs
-	mu          sync.RWMutex
+	Elements  []*Element   `json:"elements"`   // Ordered list of elements
+	ReplicaID string       `json:"replica_id"` // This node's ID
+	Clock     *VectorClock `json:"clock"`      // Vector clock for causality
+	Lamport   int64        `json:"lamport"`    // Lamport clock for element IDs
+	mu        sync.RWMutex
 }
 
 // NewRGADocument creates a new RGA document

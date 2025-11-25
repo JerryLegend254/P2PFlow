@@ -217,7 +217,7 @@ func (im *IgnoreMatcher) matchPathParts(patternParts, pathParts []string) bool {
 	// If pattern length equals path length, it's an exact match
 	// If pattern is shorter, it matches as a prefix
 	return len(patternParts) == len(pathParts) ||
-	       (len(patternParts) < len(pathParts) && !strings.Contains(strings.Join(patternParts, "/"), "/"))
+		(len(patternParts) < len(pathParts) && !strings.Contains(strings.Join(patternParts, "/"), "/"))
 }
 
 // matchGlob performs simple glob matching

@@ -107,10 +107,10 @@ type ModeConfig struct {
 	DebounceInterval time.Duration `json:"debounce_interval" yaml:"debounce_interval"`
 
 	// Permissions
-	ReadOnly        bool `json:"read_only" yaml:"read_only"`
-	CanSendChanges  bool `json:"can_send_changes" yaml:"can_send_changes"`
+	ReadOnly          bool `json:"read_only" yaml:"read_only"`
+	CanSendChanges    bool `json:"can_send_changes" yaml:"can_send_changes"`
 	CanReceiveChanges bool `json:"can_receive_changes" yaml:"can_receive_changes"`
-	RequireApproval bool `json:"require_approval" yaml:"require_approval"`
+	RequireApproval   bool `json:"require_approval" yaml:"require_approval"`
 
 	// Conflict handling
 	ConflictStrategy ConflictResolution `json:"conflict_strategy" yaml:"conflict_strategy"`
@@ -137,10 +137,10 @@ type ModeConfig struct {
 	LeaderPeerID string `json:"leader_peer_id" yaml:"leader_peer_id"`
 
 	// Advanced features
-	EnableAntiEntropy  bool          `json:"enable_anti_entropy" yaml:"enable_anti_entropy"`
+	EnableAntiEntropy   bool          `json:"enable_anti_entropy" yaml:"enable_anti_entropy"`
 	AntiEntropyInterval time.Duration `json:"anti_entropy_interval" yaml:"anti_entropy_interval"`
-	EnablePrefetch     bool          `json:"enable_prefetch" yaml:"enable_prefetch"`
-	CacheChanges       bool          `json:"cache_changes" yaml:"cache_changes"`
+	EnablePrefetch      bool          `json:"enable_prefetch" yaml:"enable_prefetch"`
+	CacheChanges        bool          `json:"cache_changes" yaml:"cache_changes"`
 }
 
 // Predefined mode configurations
@@ -409,7 +409,7 @@ var PresetModes = map[CollaborationMode]ModeConfig{
 		BatchOperations:     true,
 		MaxBatchSize:        20,
 		ThrottleRate:        1024 * 1024, // 1 MB/s
-		SelectivePaths:      []string{}, // User must specify
+		SelectivePaths:      []string{},  // User must specify
 		Notifications:       NotifyImportant,
 		VerboseOutput:       false,
 		EnableAntiEntropy:   true,

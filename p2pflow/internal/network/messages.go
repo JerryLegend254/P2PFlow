@@ -9,11 +9,11 @@ import (
 
 // CRDTMessage represents a CRDT operation message
 type CRDTMessage struct {
-	Type      CRDTMessageType  `json:"type"`
-	SessionID string           `json:"session_id"`
-	AgentID   string           `json:"agent_id"`
-	Payload   json.RawMessage  `json:"payload"`
-	Timestamp int64            `json:"timestamp"`
+	Type      CRDTMessageType `json:"type"`
+	SessionID string          `json:"session_id"`
+	AgentID   string          `json:"agent_id"`
+	Payload   json.RawMessage `json:"payload"`
+	Timestamp int64           `json:"timestamp"`
 }
 
 // CRDTMessageType represents the type of CRDT message
@@ -40,15 +40,15 @@ const (
 
 // CRDTOperationMessage carries a CRDT operation to peers
 type CRDTOperationMessage struct {
-	FilePath  string          `json:"file_path"`  // Path to the file being modified
-	Operation *crdt.Operation `json:"operation"`  // The CRDT operation
+	FilePath  string          `json:"file_path"` // Path to the file being modified
+	Operation *crdt.Operation `json:"operation"` // The CRDT operation
 }
 
 // CRDTSyncRequest requests operations this node is missing
 type CRDTSyncRequest struct {
-	SessionID   string             `json:"session_id"`
-	AgentID     string             `json:"agent_id"`
-	VectorClock *crdt.VectorClock  `json:"vector_clock"` // What this node has seen
+	SessionID   string            `json:"session_id"`
+	AgentID     string            `json:"agent_id"`
+	VectorClock *crdt.VectorClock `json:"vector_clock"` // What this node has seen
 }
 
 // CRDTSyncResponse sends operations the requesting node is missing

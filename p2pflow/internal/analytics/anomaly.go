@@ -9,13 +9,13 @@ import (
 type AnomalyType string
 
 const (
-	AnomalyTypeUnusualAccessPattern  AnomalyType = "unusual_access_pattern"
-	AnomalyTypeUnusualTime           AnomalyType = "unusual_time"
-	AnomalyTypeSuspiciousFrequency   AnomalyType = "suspicious_frequency"
-	AnomalyTypeUnexpectedPeer        AnomalyType = "unexpected_peer"
-	AnomalyTypeLargeFileChange       AnomalyType = "large_file_change"
-	AnomalyTypeRapidChanges          AnomalyType = "rapid_changes"
-	AnomalyTypeUnusualFileSize       AnomalyType = "unusual_file_size"
+	AnomalyTypeUnusualAccessPattern AnomalyType = "unusual_access_pattern"
+	AnomalyTypeUnusualTime          AnomalyType = "unusual_time"
+	AnomalyTypeSuspiciousFrequency  AnomalyType = "suspicious_frequency"
+	AnomalyTypeUnexpectedPeer       AnomalyType = "unexpected_peer"
+	AnomalyTypeLargeFileChange      AnomalyType = "large_file_change"
+	AnomalyTypeRapidChanges         AnomalyType = "rapid_changes"
+	AnomalyTypeUnusualFileSize      AnomalyType = "unusual_file_size"
 )
 
 // AnomalySeverity represents how severe an anomaly is
@@ -30,13 +30,13 @@ const (
 
 // Anomaly represents a detected anomaly
 type Anomaly struct {
-	Type        AnomalyType     `json:"type"`
-	Severity    AnomalySeverity `json:"severity"`
-	FilePath    string          `json:"file_path,omitempty"`
-	PeerID      string          `json:"peer_id,omitempty"`
-	Description string          `json:"description"`
-	Score       float64         `json:"score"` // How anomalous (0-1, higher = more anomalous)
-	Timestamp   time.Time       `json:"timestamp"`
+	Type        AnomalyType            `json:"type"`
+	Severity    AnomalySeverity        `json:"severity"`
+	FilePath    string                 `json:"file_path,omitempty"`
+	PeerID      string                 `json:"peer_id,omitempty"`
+	Description string                 `json:"description"`
+	Score       float64                `json:"score"` // How anomalous (0-1, higher = more anomalous)
+	Timestamp   time.Time              `json:"timestamp"`
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
 
@@ -100,7 +100,7 @@ func (d *AnomalyDetector) detectUnusualAccessTimes() []Anomaly {
 				Score:       score,
 				Timestamp:   record.Timestamp,
 				Details: map[string]interface{}{
-					"hour":         hour,
+					"hour":          hour,
 					"expected_prob": expectedProb,
 				},
 			})
