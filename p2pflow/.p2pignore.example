@@ -1,0 +1,94 @@
+# P2PFlow Ignore File
+# =====================
+# This file tells P2PFlow which files and directories to exclude from synchronization.
+# It works similarly to .gitignore files.
+
+# Comments start with # and blank lines are ignored
+
+# Ignore specific files
+.DS_Store
+Thumbs.db
+.env
+.env.local
+credentials.json
+
+# Ignore all files with specific extensions
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Ignore directories (trailing slash)
+.git/
+.svn/
+.collab/
+node_modules/
+__pycache__/
+.vscode/
+.idea/
+dist/
+build/
+target/
+
+# Ignore files in specific directories
+logs/*.log
+tmp/*
+
+# Path-specific patterns (contain /)
+# These match from the root of the synced directory
+src/generated/
+docs/build/
+
+# Use wildcards
+# * matches any characters except /
+# ** matches any characters including /
+**/*.pyc
+**/node_modules/
+
+# Negation patterns (start with !)
+# First ignore all log files, then un-ignore important.log
+*.log
+!important.log
+
+# Directory-only patterns (end with /)
+# These only match directories, not files
+test/
+temp/
+
+# Common patterns for development
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+a.out
+*.class
+*.jar
+*.war
+*.nar
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
