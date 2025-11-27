@@ -68,8 +68,14 @@ func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
 				return fmt.Errorf("error decoding device code response: %w", err)
 			}
 
+			// Check if we got a valid response
+			if dc.DeviceCode == "" || dc.UserCode == "" || dc.VerificationURI == "" {
+				return fmt.Errorf("invalid device code response from GitHub - please check your GITHUB_CLIENT_ID")
+			}
+
 			// Print instructions for the user
 			app.console.Infof("Please visit %s and enter the code: %s", dc.VerificationURI, dc.UserCode)
+			app.console.Infof("Code expires in %d seconds. Waiting for authorization...", dc.ExpiresIn)
 
 			// Poll GitHub until authorized or expired
 			interval := time.Duration(dc.Interval) * time.Second
@@ -147,6 +153,9 @@ func (app *application) newLoginCommand(conf *oauth2.Config) *cobra.Command {
 					viper.Set("auth.expires_at", ac.ExpiresAt)
 
 					app.saveConfig()
+
+					// Print success message
+					app.console.Infof("✓ Successfully logged in as %s", user.Username)
 				} else {
 					return fmt.Errorf("unexpected token response: %v", tokenData)
 				}
